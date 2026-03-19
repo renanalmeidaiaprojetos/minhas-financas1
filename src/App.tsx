@@ -12,7 +12,7 @@ import {
 
 // ⚠️ ATENÇÃO: Se for copiar para o GitHub, cole a sua NOVA chave da Google aqui!
 // No teste aqui ao lado, pode deixar em branco (eu uso uma chave temporária interna).
-const apiKey = "AIzaSyB8co336mEKMrM25rAZF3GGrR4qGNePJCo"; 
+const apiKey = "AIzaSyCsJng6N_F08x8CN2TDZrA339sDdzigN6g"; 
 
 const DADOS_INICIAIS = [
   { id: '1', description: 'Salário', amount: 4500.00, type: 'income', category: 'Trabalho', date: '2026-03-01', status: 'paid', wallet: 'Conta Corrente', isSubscription: false },
