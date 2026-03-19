@@ -10,8 +10,9 @@ import {
   Bell, CreditCard, Sparkles, RefreshCw, Banknote, Landmark, AlertTriangle, Bot
 } from 'lucide-react';
 
-// ⚠️ ATENÇÃO: Cole a sua chave do Google AI Studio aqui dentro das aspas!
-const apiKey = "AIzaSyCGm-S66h_JRcw7_5hfql6fclXHILDuuVA"; 
+// ⚠️ ATENÇÃO: Se for copiar para o GitHub, cole a sua NOVA chave da Google aqui!
+// No teste aqui ao lado, pode deixar em branco (eu uso uma chave temporária interna).
+const apiKey = "AIzaSyB8co336mEKMrM25rAZF3GGrR4qGNePJCo"; 
 
 const DADOS_INICIAIS = [
   { id: '1', description: 'Salário', amount: 4500.00, type: 'income', category: 'Trabalho', date: '2026-03-01', status: 'paid', wallet: 'Conta Corrente', isSubscription: false },
@@ -43,7 +44,6 @@ const ORCAMENTOS_PADRAO = {
 };
 
 export default function App() {
-  // Estados de Dados
   const [transactions, setTransactions] = useState(() => {
     const saved = localStorage.getItem('financas_app_data');
     return saved ? JSON.parse(saved) : DADOS_INICIAIS;
@@ -58,7 +58,6 @@ export default function App() {
     return localStorage.getItem('financas_app_theme') === 'dark';
   });
 
-  // Salvar no LocalStorage
   useEffect(() => { localStorage.setItem('financas_app_data', JSON.stringify(transactions)); }, [transactions]);
   useEffect(() => { localStorage.setItem('financas_app_budgets', JSON.stringify(budgets)); }, [budgets]);
   useEffect(() => { 
@@ -67,9 +66,8 @@ export default function App() {
     else document.documentElement.classList.remove('dark');
   }, [darkMode]);
 
-  // Estados da Interface
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [viewMode, setViewMode] = useState('monthly'); // monthly, annual, charts
+  const [viewMode, setViewMode] = useState('monthly');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [compareDate, setCompareDate] = useState(() => {
     const d = new Date(); d.setMonth(d.getMonth() - 1); return d;
@@ -77,11 +75,9 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   
-  // Estados do Conselheiro IA
   const [advisorAdvice, setAdvisorAdvice] = useState('');
   const [isAdvisorLoading, setIsAdvisorLoading] = useState(false);
 
-  // Estados do Formulário
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [type, setType] = useState('expense');
@@ -89,15 +85,13 @@ export default function App() {
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [status, setStatus] = useState('paid');
   const [wallet, setWallet] = useState('Conta Corrente');
-  const [recurrenceType, setRecurrenceType] = useState('none'); // none, installments, subscription
+  const [recurrenceType, setRecurrenceType] = useState('none');
   const [installments, setInstallments] = useState(2);
 
-  // Estados da IA (Importação de Comprovantes)
   const [isReceiptImportOpen, setIsReceiptImportOpen] = useState(false);
   const [isReceiptImporting, setIsReceiptImporting] = useState(false);
   const [receiptImportMessage, setReceiptImportMessage] = useState({ type: '', text: '' });
 
-  // Central de Notificações (Contas próximas do vencimento - 5 dias)
   const upcomingBills = useMemo(() => {
     const today = new Date();
     today.setHours(0,0,0,0);
@@ -109,7 +103,6 @@ export default function App() {
                        .sort((a,b) => a.date.localeCompare(b.date));
   }, [transactions]);
 
-  // Filtro de Transações (Período Atual + Pesquisa)
   const filteredTransactions = useMemo(() => {
     const viewYear = currentDate.getFullYear();
     const viewMonth = currentDate.getMonth();
@@ -134,7 +127,6 @@ export default function App() {
     });
   }, [transactions, currentDate, viewMode, searchQuery]);
 
-  // Transações do Período de Comparação (Aba Gráficos)
   const comparisonTransactions = useMemo(() => {
     const compYear = compareDate.getFullYear();
     const compMonth = compareDate.getMonth();
@@ -149,7 +141,6 @@ export default function App() {
     });
   }, [transactions, compareDate, viewMode]);
 
-  // Resumo Financeiro
   const summary = useMemo(() => {
     return filteredTransactions.reduce(
       (acc, curr) => {
@@ -166,7 +157,6 @@ export default function App() {
     );
   }, [filteredTransactions]);
 
-  // Estatísticas para Gráficos
   const categoryStats = useMemo(() => {
     const expenses = filteredTransactions.filter(t => t.type === 'expense');
     const totalExpenses = expenses.reduce((acc, curr) => acc + curr.amount, 0);
@@ -180,7 +170,6 @@ export default function App() {
       })).sort((a, b) => b.amount - a.amount);
   }, [filteredTransactions, budgets]);
 
-  // Comparativo
   const comparisonStats = useMemo(() => {
     const currentExpenses = filteredTransactions.filter(t => t.type === 'expense');
     const previousExpenses = comparisonTransactions.filter(t => t.type === 'expense');
@@ -195,7 +184,6 @@ export default function App() {
     }).sort((a, b) => b.current - a.current);
   }, [filteredTransactions, comparisonTransactions]);
 
-  // Funções Utilitárias
   const formatCurrency = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
   const formatDate = (dateString) => new Date(`${dateString}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
   const formatPeriodLabel = () => {
@@ -214,17 +202,15 @@ export default function App() {
       else newDate.setMonth(prev.getMonth() + direction);
       return newDate;
     });
-    setAdvisorAdvice(''); // Reseta o conselho ao mudar de mês
+    setAdvisorAdvice(''); 
   };
 
-  // Ícones de Carteira
   const WalletIcon = ({ type, size = 14, className = "" }) => {
     if (type === 'Cartão de Crédito') return <CreditCard size={size} className={className} />;
     if (type === 'Dinheiro') return <Banknote size={size} className={className} />;
-    return <Landmark size={size} className={className} />; // Conta Corrente
+    return <Landmark size={size} className={className} />; 
   };
 
-  // Ações Manuais
   const handleAddTransaction = (e) => {
     e.preventDefault();
     if (!description || !amount) return;
@@ -273,7 +259,6 @@ export default function App() {
     setRecurrenceType('none'); setInstallments(2);
   };
 
-  // Alternar Status & Auto-gerar Subscrição (Assinatura Mensal)
   const toggleStatus = (id) => {
     setTransactions(prev => {
       const tx = prev.find(t => t.id === id);
@@ -282,20 +267,18 @@ export default function App() {
       const isMovingToPaid = tx.status === 'pending';
       let newTransactions = prev.map(t => t.id === id ? { ...t, status: isMovingToPaid ? 'paid' : 'pending' } : t);
 
-      // MÁGICA: Se é uma subscrição e acabou de pagar, cria a do próximo mês!
       if (isMovingToPaid && tx.isSubscription) {
           const currentTxDate = new Date(`${tx.date}T12:00:00`);
           currentTxDate.setMonth(currentTxDate.getMonth() + 1);
           const nextDateString = currentTxDate.toISOString().split('T')[0];
 
-          // Verifica se já não existe para não duplicar acidentalmente
           const alreadyExists = newTransactions.some(t => t.description === tx.description && t.date === nextDateString && t.isSubscription);
           if (!alreadyExists) {
               newTransactions.push({
                   ...tx,
                   id: crypto.randomUUID(),
                   date: nextDateString,
-                  status: 'pending' // Nasce pendente
+                  status: 'pending' 
               });
           }
       }
@@ -318,7 +301,6 @@ export default function App() {
     if (newBudget !== null && !isNaN(newBudget)) setBudgets({ ...budgets, [cat]: parseFloat(newBudget) });
   };
 
-  // Conselheiro IA
   const handleGetAdvisorAdvice = async () => {
       setIsAdvisorLoading(true);
       try {
@@ -337,8 +319,7 @@ export default function App() {
             systemInstruction: { parts: [{ text: systemInstruction }] }
           };
 
-          // USANDO O MODELO "LATEST" PARA GARANTIR COMPATIBILIDADE
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
           });
           
@@ -355,7 +336,6 @@ export default function App() {
       }
   };
 
-  // Leitura Inteligente de Comprovantes (IA) - MELHORADA PARA IMAGENS E PDF
   const handleReceiptImport = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -369,7 +349,6 @@ export default function App() {
       let mimeType = file.type;
       let base64Data = "";
 
-      // Verifica se é imagem para comprimir
       if (file.type.startsWith('image/')) {
           base64Data = await new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -379,7 +358,7 @@ export default function App() {
                 const canvas = document.createElement('canvas');
                 let width = img.width;
                 let height = img.height;
-                const maxSize = 800; // Limite máximo para não bloquear a internet do telemóvel
+                const maxSize = 800; 
                 
                 if (width > height && width > maxSize) {
                   height *= maxSize / width;
@@ -404,7 +383,6 @@ export default function App() {
           });
           mimeType = 'image/jpeg';
       } else {
-          // Se for PDF (ou outro formato), NÃO tenta comprimir, lê diretamente
           base64Data = await new Promise((resolve, reject) => {
               const reader = new FileReader();
               reader.onloadend = () => resolve(reader.result.split(',')[1]);
@@ -430,8 +408,7 @@ export default function App() {
         generationConfig: { responseMimeType: "application/json", responseSchema: { type: "OBJECT", properties: { description: { type: "STRING" }, amount: { type: "NUMBER" }, type: { type: "STRING" }, category: { type: "STRING" }, date: { type: "STRING" } }, required: ["description", "amount", "type", "date"] } }
       };
 
-      // USANDO O MODELO "LATEST" PARA GARANTIR COMPATIBILIDADE
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       
@@ -471,7 +448,6 @@ export default function App() {
 
     } catch (err) { 
         console.error("Erro completo:", err);
-        // MOSTRA O ERRO REAL PARA SABERMOS O QUE CORREU MAL
         setReceiptImportMessage({ type: 'error', text: `Falhou: ${err.message}` }); 
     } 
     finally { 
@@ -496,7 +472,6 @@ export default function App() {
             </div>
             <div className="flex items-center gap-3">
               
-              {/* SINO DE NOTIFICAÇÕES */}
               <div className="relative">
                 <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 rounded-full hover:bg-white/10 transition-colors relative" title="Notificações">
                   <Bell size={20} />
