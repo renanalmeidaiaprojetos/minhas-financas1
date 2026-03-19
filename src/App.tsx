@@ -14,7 +14,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
 // ⚠️ ATENÇÃO: Cole a sua NOVA chave do Google AI Studio (Gemini) aqui!
-const apiKey = "AIzaSyCsJng6N_F08x8CN2TDZrA339sDdzigN6g"; 
+const apiKey = ""; 
 
 const DADOS_INICIAIS = [
   { id: '1', description: 'Salário', amount: 4500.00, type: 'income', category: 'Trabalho', date: '2026-03-01', status: 'paid', wallet: 'Conta Corrente', isSubscription: false },
@@ -373,11 +373,14 @@ export default function App() {
             systemInstruction: { parts: [{ text: systemInstruction }] }
           };
 
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
           });
           
-          if (!res.ok) throw new Error("Erro de comunicação com a IA.");
+          if (!res.ok) {
+              const errData = await res.json();
+              throw new Error(errData.error?.message || "Erro de comunicação com a IA.");
+          }
           const responseData = await res.json();
           setAdvisorAdvice(responseData.candidates[0].content.parts[0].text);
       } catch(e) { setAdvisorAdvice(`Ops! Falhou: ${e.message}`); } finally { setIsAdvisorLoading(false); }
@@ -434,10 +437,14 @@ export default function App() {
         generationConfig: { responseMimeType: "application/json", responseSchema: { type: "OBJECT", properties: { description: { type: "STRING" }, amount: { type: "NUMBER" }, type: { type: "STRING" }, category: { type: "STRING" }, date: { type: "STRING" } }, required: ["description", "amount", "type", "date"] } }
       };
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error("Servidor da IA recusou a imagem.");
+      
+      if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error?.message || "Servidor da IA recusou a imagem.");
+      }
 
       const responseData = await res.json();
       const extracted = JSON.parse(responseData.candidates[0].content.parts[0].text);
