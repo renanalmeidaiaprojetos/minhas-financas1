@@ -9,9 +9,11 @@ import {
   ArrowUpRight, ArrowDownRight, Minus, Receipt, UploadCloud, Loader2,
   Bell, CreditCard, Sparkles, RefreshCw, Banknote, Landmark, AlertTriangle, Bot
 } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
-// ⚠️ ATENÇÃO: Se for copiar para o GitHub, cole a sua NOVA chave da Google aqui!
-// No teste aqui ao lado, pode deixar em branco (eu uso uma chave temporária interna).
+// ⚠️ ATENÇÃO: Cole a sua NOVA chave da Google aqui!
 const apiKey = "AIzaSyCsJng6N_F08x8CN2TDZrA339sDdzigN6g"; 
 
 const DADOS_INICIAIS = [
@@ -39,32 +41,86 @@ const CATEGORIAS = {
   'Outros': { icon: DollarSign, color: 'text-gray-500', bg: 'bg-gray-100', darkBg: 'dark:bg-gray-800', barColor: 'bg-gray-500' },
 };
 
-const ORCAMENTOS_PADRAO = {
-  'Alimentação': 1000, 'Transporte': 500, 'Moradia': 2000, 'Contas': 800, 'Lazer': 400
-};
+const ORCAMENTOS_PADRAO = { 'Alimentação': 1000, 'Transporte': 500, 'Moradia': 2000, 'Contas': 800, 'Lazer': 400 };
+
+// --- CONFIGURAÇÃO DA NUVEM (FIREBASE) ---
+let app, auth, db, appId;
+if (typeof __firebase_config !== 'undefined') {
+    const firebaseConfig = JSON.parse(__firebase_config);
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+}
 
 export default function App() {
-  const [transactions, setTransactions] = useState(() => {
-    const saved = localStorage.getItem('financas_app_data');
-    return saved ? JSON.parse(saved) : DADOS_INICIAIS;
-  });
-  
-  const [budgets, setBudgets] = useState(() => {
-    const saved = localStorage.getItem('financas_app_budgets');
-    return saved ? JSON.parse(saved) : ORCAMENTOS_PADRAO;
-  });
+  const [transactions, setTransactions] = useState([]);
+  const [budgets, setBudgets] = useState(ORCAMENTOS_PADRAO);
+  const [user, setUser] = useState(null);
+  const [isCloudLoading, setIsCloudLoading] = useState(true);
 
   const [darkMode, setDarkMode] = useState(() => {
     return localStorage.getItem('financas_app_theme') === 'dark';
   });
 
-  useEffect(() => { localStorage.setItem('financas_app_data', JSON.stringify(transactions)); }, [transactions]);
-  useEffect(() => { localStorage.setItem('financas_app_budgets', JSON.stringify(budgets)); }, [budgets]);
+  // Ligar à Nuvem
+  useEffect(() => {
+    if (!auth) {
+        setIsCloudLoading(false);
+        const savedTx = localStorage.getItem('financas_app_data');
+        const savedBg = localStorage.getItem('financas_app_budgets');
+        if (savedTx) setTransactions(JSON.parse(savedTx));
+        else setTransactions(DADOS_INICIAIS);
+        if (savedBg) setBudgets(JSON.parse(savedBg));
+        return;
+    }
+    
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch(e) { console.error("Erro auth:", e); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // Escutar a Nuvem
+  useEffect(() => {
+    if (!user || !db) return;
+    setIsCloudLoading(true);
+
+    const txRef = collection(db, 'artifacts', appId, 'public', 'data', 'transactions');
+    const unsubTx = onSnapshot(txRef, (snapshot) => {
+       const loadedTxs = [];
+       snapshot.forEach(d => loadedTxs.push({ ...d.data(), id: d.id }));
+       setTransactions(loadedTxs.sort((a, b) => new Date(b.date) - new Date(a.date)));
+       setIsCloudLoading(false);
+    }, (err) => { console.error(err); setIsCloudLoading(false); });
+
+    const bgRef = collection(db, 'artifacts', appId, 'public', 'data', 'budgets');
+    const unsubBg = onSnapshot(bgRef, (snapshot) => {
+       let loadedBg = { ...ORCAMENTOS_PADRAO };
+       snapshot.forEach(d => { loadedBg[d.id] = d.data().amount; });
+       setBudgets(loadedBg);
+    }, (err) => console.error(err));
+
+    return () => { unsubTx(); unsubBg(); };
+  }, [user]);
+
   useEffect(() => { 
+    if (!db) {
+        localStorage.setItem('financas_app_data', JSON.stringify(transactions));
+        localStorage.setItem('financas_app_budgets', JSON.stringify(budgets));
+    }
     localStorage.setItem('financas_app_theme', darkMode ? 'dark' : 'light');
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
-  }, [darkMode]);
+  }, [darkMode, transactions, budgets]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState('monthly');
@@ -74,7 +130,6 @@ export default function App() {
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  
   const [advisorAdvice, setAdvisorAdvice] = useState('');
   const [isAdvisorLoading, setIsAdvisorLoading] = useState(false);
 
@@ -93,36 +148,23 @@ export default function App() {
   const [receiptImportMessage, setReceiptImportMessage] = useState({ type: '', text: '' });
 
   const upcomingBills = useMemo(() => {
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    const limitDate = new Date(today);
-    limitDate.setDate(today.getDate() + 5);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const limitDate = new Date(today); limitDate.setDate(today.getDate() + 5);
     const limitStr = limitDate.toISOString().split('T')[0];
-    
-    return transactions.filter(t => t.status === 'pending' && t.type === 'expense' && t.date <= limitStr)
-                       .sort((a,b) => a.date.localeCompare(b.date));
+    return transactions.filter(t => t.status === 'pending' && t.type === 'expense' && t.date <= limitStr).sort((a,b) => a.date.localeCompare(b.date));
   }, [transactions]);
 
   const filteredTransactions = useMemo(() => {
     const viewYear = currentDate.getFullYear();
     const viewMonth = currentDate.getMonth();
-
     return transactions.filter(t => {
-      let tYear = viewYear;
-      let tMonth = viewMonth + 1;
-      
+      let tYear = viewYear; let tMonth = viewMonth + 1;
       if (t.date && typeof t.date === 'string') {
          const parts = t.date.split('-');
          if (parts.length >= 2) { tYear = parseInt(parts[0]); tMonth = parseInt(parts[1]); }
       }
-
-      const matchPeriod = viewMode === 'annual' 
-        ? tYear === viewYear 
-        : (tYear === viewYear && (tMonth - 1) === viewMonth);
-      
-      const matchSearch = t.description.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          t.category.toLowerCase().includes(searchQuery.toLowerCase());
-
+      const matchPeriod = viewMode === 'annual' ? tYear === viewYear : (tYear === viewYear && (tMonth - 1) === viewMonth);
+      const matchSearch = t.description.toLowerCase().includes(searchQuery.toLowerCase()) || t.category.toLowerCase().includes(searchQuery.toLowerCase());
       return matchPeriod && matchSearch;
     });
   }, [transactions, currentDate, viewMode, searchQuery]);
@@ -130,7 +172,6 @@ export default function App() {
   const comparisonTransactions = useMemo(() => {
     const compYear = compareDate.getFullYear();
     const compMonth = compareDate.getMonth();
-
     return transactions.filter(t => {
       let tYear = compYear; let tMonth = compMonth + 1;
       if (t.date && typeof t.date === 'string') {
@@ -142,8 +183,7 @@ export default function App() {
   }, [transactions, compareDate, viewMode]);
 
   const summary = useMemo(() => {
-    return filteredTransactions.reduce(
-      (acc, curr) => {
+    return filteredTransactions.reduce((acc, curr) => {
         if (curr.type === 'income') {
           acc.expectedIncome += curr.amount; acc.expectedBalance += curr.amount;
           if (curr.status === 'paid') { acc.realIncome += curr.amount; acc.realBalance += curr.amount; }
@@ -152,9 +192,7 @@ export default function App() {
           if (curr.status === 'paid') { acc.realExpense += curr.amount; acc.realBalance -= curr.amount; }
         }
         return acc;
-      },
-      { realIncome: 0, realExpense: 0, realBalance: 0, expectedIncome: 0, expectedExpense: 0, expectedBalance: 0 }
-    );
+      }, { realIncome: 0, realExpense: 0, realBalance: 0, expectedIncome: 0, expectedExpense: 0, expectedBalance: 0 });
   }, [filteredTransactions]);
 
   const categoryStats = useMemo(() => {
@@ -163,9 +201,7 @@ export default function App() {
     const grouped = expenses.reduce((acc, curr) => {
       acc[curr.category] = (acc[curr.category] || 0) + curr.amount; return acc;
     }, {});
-
-    return Object.entries(grouped)
-      .map(([cat, amt]) => ({
+    return Object.entries(grouped).map(([cat, amt]) => ({
         category: cat, amount: amt, percentage: totalExpenses > 0 ? (amt / totalExpenses) * 100 : 0, budget: budgets[cat] || 0
       })).sort((a, b) => b.amount - a.amount);
   }, [filteredTransactions, budgets]);
@@ -173,10 +209,8 @@ export default function App() {
   const comparisonStats = useMemo(() => {
     const currentExpenses = filteredTransactions.filter(t => t.type === 'expense');
     const previousExpenses = comparisonTransactions.filter(t => t.type === 'expense');
-
     const currentGrouped = currentExpenses.reduce((acc, curr) => { acc[curr.category] = (acc[curr.category] || 0) + curr.amount; return acc; }, {});
     const previousGrouped = previousExpenses.reduce((acc, curr) => { acc[curr.category] = (acc[curr.category] || 0) + curr.amount; return acc; }, {});
-
     const allCategories = new Set([...Object.keys(currentGrouped), ...Object.keys(previousGrouped)]);
     return Array.from(allCategories).map(cat => {
       const current = currentGrouped[cat] || 0; const previous = previousGrouped[cat] || 0;
@@ -211,7 +245,7 @@ export default function App() {
     return <Landmark size={size} className={className} />; 
   };
 
-  const handleAddTransaction = (e) => {
+  const handleAddTransaction = async (e) => {
     e.preventDefault();
     if (!description || !amount) return;
 
@@ -220,15 +254,9 @@ export default function App() {
 
     if (recurrenceType === 'subscription') {
         newTrans.push({
-          id: crypto.randomUUID(),
-          description,
-          amount: parseFloat(amount),
-          type,
+          id: crypto.randomUUID(), description, amount: parseFloat(amount), type,
           category: type === 'income' && category === 'Alimentação' ? 'Trabalho' : category,
-          date: currentTransDate.toISOString().split('T')[0],
-          status,
-          wallet,
-          isSubscription: true
+          date: currentTransDate.toISOString().split('T')[0], status, wallet, isSubscription: true
         });
     } else {
         const totalInstallments = recurrenceType === 'installments' ? installments : 1;
@@ -236,21 +264,21 @@ export default function App() {
           newTrans.push({
             id: crypto.randomUUID(),
             description: totalInstallments > 1 ? `${description} (${i + 1}/${totalInstallments})` : description,
-            amount: parseFloat(amount),
-            type,
-            category: type === 'income' && category === 'Alimentação' ? 'Trabalho' : category,
-            date: currentTransDate.toISOString().split('T')[0],
-            status: i === 0 ? status : 'pending',
-            wallet,
-            isSubscription: false
+            amount: parseFloat(amount), type, category: type === 'income' && category === 'Alimentação' ? 'Trabalho' : category,
+            date: currentTransDate.toISOString().split('T')[0], status: i === 0 ? status : 'pending', wallet, isSubscription: false
           });
           currentTransDate.setMonth(currentTransDate.getMonth() + 1);
         }
     }
 
-    setTransactions([...newTrans, ...transactions].sort((a, b) => new Date(b.date) - new Date(a.date)));
-    setIsModalOpen(false);
-    resetForm();
+    if (db && user) {
+        for (const tx of newTrans) {
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', tx.id), tx);
+        }
+    } else {
+        setTransactions([...newTrans, ...transactions].sort((a, b) => new Date(b.date) - new Date(a.date)));
+    }
+    setIsModalOpen(false); resetForm();
   };
 
   const resetForm = () => {
@@ -259,34 +287,44 @@ export default function App() {
     setRecurrenceType('none'); setInstallments(2);
   };
 
-  const toggleStatus = (id) => {
-    setTransactions(prev => {
-      const tx = prev.find(t => t.id === id);
-      if (!tx) return prev;
+  const toggleStatus = async (id) => {
+    const tx = transactions.find(t => t.id === id);
+    if (!tx) return;
 
-      const isMovingToPaid = tx.status === 'pending';
-      let newTransactions = prev.map(t => t.id === id ? { ...t, status: isMovingToPaid ? 'paid' : 'pending' } : t);
+    const isMovingToPaid = tx.status === 'pending';
+    const updatedTx = { ...tx, status: isMovingToPaid ? 'paid' : 'pending' };
 
-      if (isMovingToPaid && tx.isSubscription) {
-          const currentTxDate = new Date(`${tx.date}T12:00:00`);
-          currentTxDate.setMonth(currentTxDate.getMonth() + 1);
-          const nextDateString = currentTxDate.toISOString().split('T')[0];
-
-          const alreadyExists = newTransactions.some(t => t.description === tx.description && t.date === nextDateString && t.isSubscription);
-          if (!alreadyExists) {
-              newTransactions.push({
-                  ...tx,
-                  id: crypto.randomUUID(),
-                  date: nextDateString,
-                  status: 'pending' 
-              });
-          }
-      }
-      return newTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
-    });
+    if (db && user) {
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', tx.id), updatedTx);
+        if (isMovingToPaid && tx.isSubscription) {
+            const currentTxDate = new Date(`${tx.date}T12:00:00`);
+            currentTxDate.setMonth(currentTxDate.getMonth() + 1);
+            const nextDateString = currentTxDate.toISOString().split('T')[0];
+            const alreadyExists = transactions.some(t => t.description === tx.description && t.date === nextDateString && t.isSubscription);
+            if (!alreadyExists) {
+                const newTx = { ...tx, id: crypto.randomUUID(), date: nextDateString, status: 'pending' };
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', newTx.id), newTx);
+            }
+        }
+    } else {
+        let newTransactions = transactions.map(t => t.id === id ? updatedTx : t);
+        if (isMovingToPaid && tx.isSubscription) {
+            const currentTxDate = new Date(`${tx.date}T12:00:00`);
+            currentTxDate.setMonth(currentTxDate.getMonth() + 1);
+            const nextDateString = currentTxDate.toISOString().split('T')[0];
+            const alreadyExists = newTransactions.some(t => t.description === tx.description && t.date === nextDateString && t.isSubscription);
+            if (!alreadyExists) {
+                newTransactions.push({ ...tx, id: crypto.randomUUID(), date: nextDateString, status: 'pending' });
+            }
+        }
+        setTransactions(newTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)));
+    }
   };
 
-  const handleDelete = (id) => setTransactions(transactions.filter(t => t.id !== id));
+  const handleDelete = async (id) => {
+      if (db && user) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', id));
+      else setTransactions(transactions.filter(t => t.id !== id));
+  };
 
   const exportCSV = () => {
     const headers = "Data,Descrição,Categoria,Tipo,Valor,Conta,Status\n";
@@ -296,18 +334,23 @@ export default function App() {
     const a = document.createElement('a'); a.href = url; a.download = `financas_${new Date().toISOString().split('T')[0]}.csv`; a.click();
   };
 
-  const updateBudget = (cat) => {
+  const updateBudget = async (cat) => {
     const newBudget = prompt(`Defina o limite mensal para ${cat} (R$):`, budgets[cat] || 0);
-    if (newBudget !== null && !isNaN(newBudget)) setBudgets({ ...budgets, [cat]: parseFloat(newBudget) });
+    if (newBudget !== null && !isNaN(newBudget)) {
+        const amount = parseFloat(newBudget);
+        if (db && user) {
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'budgets', cat), { amount });
+        } else {
+            setBudgets({ ...budgets, [cat]: amount });
+        }
+    }
   };
 
   const handleGetAdvisorAdvice = async () => {
       setIsAdvisorLoading(true);
       try {
-          if (!apiKey) throw new Error("Chave da API não encontrada no código.");
-          
+          if (!apiKey) throw new Error("Chave da API não encontrada.");
           const topCategories = categoryStats.slice(0,3).map(c => `${c.category} (${formatCurrency(c.amount)})`).join(', ');
-          
           const systemInstruction = `Você é um Conselheiro Financeiro amigável e super inteligente.
           Analise o resumo do mês deste usuário. O foco deve ser dar 1 dica ou insight construtivo, rápido e motivador (máximo 3 frases curtas).
           Seja direto, como se fosse um SMS. Não use negritos excessivos.`;
@@ -323,25 +366,17 @@ export default function App() {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
           });
           
-          if (!res.ok) {
-              const errorData = await res.json();
-              throw new Error(errorData.error?.message || "Erro de comunicação com a IA.");
-          }
+          if (!res.ok) throw new Error("Erro de comunicação com a IA.");
           const responseData = await res.json();
           setAdvisorAdvice(responseData.candidates[0].content.parts[0].text);
-      } catch(e) {
-          setAdvisorAdvice(`Ops! Falhou: ${e.message}`);
-      } finally {
-          setIsAdvisorLoading(false);
-      }
+      } catch(e) { setAdvisorAdvice(`Ops! Falhou: ${e.message}`); } finally { setIsAdvisorLoading(false); }
   };
 
   const handleReceiptImport = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    setIsReceiptImporting(true); 
-    setReceiptImportMessage({ type: '', text: '' });
+    setIsReceiptImporting(true); setReceiptImportMessage({ type: '', text: '' });
 
     try {
       if (!apiKey) throw new Error("A chave da API (apiKey) está vazia no código.");
@@ -356,23 +391,11 @@ export default function App() {
               const img = new Image();
               img.onload = () => {
                 const canvas = document.createElement('canvas');
-                let width = img.width;
-                let height = img.height;
-                const maxSize = 800; 
-                
-                if (width > height && width > maxSize) {
-                  height *= maxSize / width;
-                  width = maxSize;
-                } else if (height > maxSize) {
-                  width *= maxSize / height;
-                  height = maxSize;
-                }
-                
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-                
+                let width = img.width; let height = img.height; const maxSize = 800; 
+                if (width > height && width > maxSize) { height *= maxSize / width; width = maxSize; } 
+                else if (height > maxSize) { width *= maxSize / height; height = maxSize; }
+                canvas.width = width; canvas.height = height;
+                const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
                 resolve(canvas.toDataURL('image/jpeg', 0.7).split(',')[1]); 
               };
               img.onerror = () => reject(new Error("Falha ao processar a imagem da câmara."));
@@ -392,18 +415,10 @@ export default function App() {
       }
 
       const systemInstruction = `Você é um assistente financeiro inteligente. Analise este comprovante.
-      Retorne JSON estrito:
-      'description': Nome curto da loja/recebedor.
-      'amount': Valor numérico exato (ex: 150.50).
-      'type': 'expense' ou 'income'.
-      'category': Escolha entre as categorias financeiras padrão.
-      'date': YYYY-MM-DD.`;
+      Retorne JSON estrito: 'description': Nome curto., 'amount': Valor exato (ex: 150.50)., 'type': 'expense' ou 'income'., 'category': Categoria padrão., 'date': YYYY-MM-DD.`;
 
       const payload = {
-        contents: [{ role: "user", parts: [
-            { text: "Extraia dados do comprovante." }, 
-            { inlineData: { mimeType: mimeType, data: base64Data } }
-        ]}],
+        contents: [{ role: "user", parts: [{ text: "Extraia dados." }, { inlineData: { mimeType, data: base64Data } }] }],
         systemInstruction: { parts: [{ text: systemInstruction }] },
         generationConfig: { responseMimeType: "application/json", responseSchema: { type: "OBJECT", properties: { description: { type: "STRING" }, amount: { type: "NUMBER" }, type: { type: "STRING" }, category: { type: "STRING" }, date: { type: "STRING" } }, required: ["description", "amount", "type", "date"] } }
       };
@@ -411,58 +426,59 @@ export default function App() {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
-      
-      if (!res.ok) {
-          const errorData = await res.json();
-          console.error("Erro da API Gemini:", errorData);
-          throw new Error(errorData.error?.message || "Servidor da IA recusou a imagem.");
-      }
+      if (!res.ok) throw new Error("Servidor da IA recusou a imagem.");
 
       const responseData = await res.json();
       const extracted = JSON.parse(responseData.candidates[0].content.parts[0].text);
-      
-      let updatedTransactions = [...transactions];
-      const matchIndex = updatedTransactions.findIndex(t => t.status === 'pending' && t.type === extracted.type && Math.abs(t.amount - extracted.amount) <= 2.0);
+      const matchIndex = transactions.findIndex(t => t.status === 'pending' && t.type === extracted.type && Math.abs(t.amount - extracted.amount) <= 2.0);
 
       if (matchIndex >= 0) {
-        updatedTransactions[matchIndex] = {
-          ...updatedTransactions[matchIndex], status: 'paid', date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : updatedTransactions[matchIndex].date
-        };
-        if (updatedTransactions[matchIndex].isSubscription) {
-             const nextDate = new Date(`${updatedTransactions[matchIndex].date}T12:00:00`);
-             nextDate.setMonth(nextDate.getMonth() + 1);
-             updatedTransactions.push({ ...updatedTransactions[matchIndex], id: crypto.randomUUID(), date: nextDate.toISOString().split('T')[0], status: 'pending' });
-        }
-        setReceiptImportMessage({ type: 'success', text: `Comprovante associado a "${updatedTransactions[matchIndex].description}" ✅` });
+          const updatedTx = { ...transactions[matchIndex], status: 'paid', date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : transactions[matchIndex].date };
+          if (db && user) {
+              await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', updatedTx.id), updatedTx);
+              if (updatedTx.isSubscription) {
+                   const nextDate = new Date(`${updatedTx.date}T12:00:00`); nextDate.setMonth(nextDate.getMonth() + 1);
+                   const newTx = { ...updatedTx, id: crypto.randomUUID(), date: nextDate.toISOString().split('T')[0], status: 'pending' };
+                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', newTx.id), newTx);
+              }
+          } else {
+              let updatedTransactions = [...transactions]; updatedTransactions[matchIndex] = updatedTx;
+              if (updatedTx.isSubscription) {
+                   const nextDate = new Date(`${updatedTx.date}T12:00:00`); nextDate.setMonth(nextDate.getMonth() + 1);
+                   updatedTransactions.push({ ...updatedTx, id: crypto.randomUUID(), date: nextDate.toISOString().split('T')[0], status: 'pending' });
+              }
+              setTransactions(updatedTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)));
+          }
+          setReceiptImportMessage({ type: 'success', text: `Comprovante associado a "${updatedTx.description}" ✅` });
       } else {
-        updatedTransactions.push({
-          id: crypto.randomUUID(), description: extracted.description || 'Comprovante', amount: parseFloat(extracted.amount) || 0, type: extracted.type === 'income' ? 'income' : 'expense',
-          category: extracted.category || 'Outros', date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : new Date().toISOString().split('T')[0],
-          status: 'paid', wallet: 'Conta Corrente', isSubscription: false
-        });
-        setReceiptImportMessage({ type: 'success', text: `Novo comprovante registado como Pago ✅` });
+          const newTx = {
+            id: crypto.randomUUID(), description: extracted.description || 'Comprovante', amount: parseFloat(extracted.amount) || 0, type: extracted.type === 'income' ? 'income' : 'expense',
+            category: extracted.category || 'Outros', date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : new Date().toISOString().split('T')[0],
+            status: 'paid', wallet: 'Conta Corrente', isSubscription: false
+          };
+          if (db && user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', newTx.id), newTx);
+          else setTransactions([...transactions, newTx].sort((a, b) => new Date(b.date) - new Date(a.date)));
+          setReceiptImportMessage({ type: 'success', text: `Novo comprovante registado como Pago ✅` });
       }
-
-      setTransactions(updatedTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)));
       setTimeout(() => setIsReceiptImportOpen(false), 4500);
-
-    } catch (err) { 
-        console.error("Erro completo:", err);
-        setReceiptImportMessage({ type: 'error', text: `Falhou: ${err.message}` }); 
-    } 
-    finally { 
-        setIsReceiptImporting(false); 
-        e.target.value = ''; 
-    }
+    } catch (err) { setReceiptImportMessage({ type: 'error', text: `Falhou: ${err.message}` }); } finally { setIsReceiptImporting(false); e.target.value = ''; }
   };
 
   const todayStr = new Date().toISOString().split('T')[0];
   const paidTransactions = filteredTransactions.filter(t => t.status === 'paid');
   const pendingTransactions = filteredTransactions.filter(t => t.status === 'pending');
 
+  if (isCloudLoading) {
+     return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-indigo-600 text-white">
+            <Loader2 className="animate-spin w-12 h-12 mb-4" />
+            <p className="text-lg font-medium text-indigo-100">A ligar ao Cofre na Nuvem...</p>
+        </div>
+     );
+  }
+
   return (
     <div className={`min-h-screen transition-colors duration-200 ${darkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-800'} font-sans pb-12`}>
-      {/* CABEÇALHO */}
       <header className="bg-indigo-600 dark:bg-indigo-900 text-white pt-6 pb-32 px-4 sm:px-6 lg:px-8 transition-colors">
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-8">
@@ -471,7 +487,6 @@ export default function App() {
               <h1 className="text-2xl font-bold tracking-tight">Finanças<span className="text-indigo-200">App</span></h1>
             </div>
             <div className="flex items-center gap-3">
-              
               <div className="relative">
                 <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2 rounded-full hover:bg-white/10 transition-colors relative" title="Notificações">
                   <Bell size={20} />
@@ -485,13 +500,13 @@ export default function App() {
                     </div>
                     <div className="max-h-64 overflow-y-auto">
                       {upcomingBills.length === 0 ? (
-                        <p className="p-4 text-center text-sm text-gray-500">Nenhuma conta para os próximos 5 dias. 🎉</p>
+                        <p className="p-4 text-center text-sm text-gray-500">Nenhuma conta para os próximos 5 dias.</p>
                       ) : (
                         upcomingBills.map(b => (
                           <div key={b.id} className={`p-3 border-b border-gray-50 dark:border-gray-700/50 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 ${b.date < todayStr ? 'bg-rose-50/50 dark:bg-rose-900/10' : ''}`}>
                             <div>
                               <p className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate w-32">{b.description}</p>
-                              <p className={`text-xs ${b.date < todayStr ? 'text-rose-500 font-bold' : 'text-gray-500'}`}>{formatDate(b.date)} {b.date < todayStr && ' (Atrasada)'}</p>
+                              <p className={`text-xs ${b.date < todayStr ? 'text-rose-500 font-bold' : 'text-gray-500'}`}>{formatDate(b.date)} {b.date < todayStr && '(Atrasada)'}</p>
                             </div>
                             <div className="text-right">
                               <p className="text-sm font-bold text-rose-600 dark:text-rose-400">{formatCurrency(b.amount)}</p>
@@ -504,10 +519,9 @@ export default function App() {
                   </div>
                 )}
               </div>
-
-              <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Tema Claro/Escuro"><Sun size={20} className="hidden dark:block"/><Moon size={20} className="dark:hidden" /></button>
-              <button onClick={exportCSV} className="p-2 rounded-full hover:bg-white/10 transition-colors hidden sm:block" title="Exportar para Excel"><Download size={20} /></button>
-              <button onClick={() => { setReceiptImportMessage({type: '', text: ''}); setIsReceiptImportOpen(true); }} className="bg-teal-500 hover:bg-teal-400 dark:bg-teal-700 dark:hover:bg-teal-600 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm text-white" title="Ler Comprovante (IA)">
+              <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-full hover:bg-white/10 transition-colors"><Sun size={20} className="hidden dark:block"/><Moon size={20} className="dark:hidden" /></button>
+              <button onClick={exportCSV} className="p-2 rounded-full hover:bg-white/10 transition-colors hidden sm:block"><Download size={20} /></button>
+              <button onClick={() => { setReceiptImportMessage({type: '', text: ''}); setIsReceiptImportOpen(true); }} className="bg-teal-500 hover:bg-teal-400 dark:bg-teal-700 dark:hover:bg-teal-600 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm text-white">
                 <Receipt size={20} /> <span className="hidden lg:inline">Comprovante</span>
               </button>
               <button onClick={() => { resetForm(); setIsModalOpen(true); }} className="bg-indigo-500 hover:bg-indigo-400 dark:bg-indigo-700 dark:hover:bg-indigo-600 px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm">
@@ -515,8 +529,6 @@ export default function App() {
               </button>
             </div>
           </div>
-
-          {/* NAVEGAÇÃO DE DATA */}
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="bg-indigo-700/50 dark:bg-indigo-950/50 p-1 rounded-lg inline-flex w-full md:w-auto overflow-x-auto">
               {['monthly', 'annual', 'charts'].map(mode => (
@@ -536,12 +548,9 @@ export default function App() {
         </div>
       </header>
 
-      {/* CONTEÚDO PRINCIPAL */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-20">
-        
         {viewMode !== 'charts' ? (
           <>
-            {/* CARTÕES DE RESUMO */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-8">
               <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center justify-between transition-colors">
                 <div>
@@ -567,7 +576,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* BARRA DE PESQUISA */}
             <div className="mb-6 flex justify-end">
               <div className="relative w-full md:w-80">
                 <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -575,14 +583,11 @@ export default function App() {
               </div>
             </div>
 
-            {/* COLUNAS: REALIZADAS VS PENDENTES */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              
-              {/* REALIZADAS */}
               <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors flex flex-col h-full">
                 <div className="p-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50 flex justify-between items-center">
                   <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                    <CheckCircle2 size={20} className="text-emerald-500" /> Realizadas do {viewMode === 'monthly' ? 'Mês' : 'Ano'}
+                    <CheckCircle2 size={20} className="text-emerald-500" /> Realizadas
                   </h2>
                   <span className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 py-0.5 px-2.5 rounded-full text-xs font-bold">{paidTransactions.length}</span>
                 </div>
@@ -596,11 +601,7 @@ export default function App() {
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-white dark:bg-gray-800 text-gray-400 text-[11px] uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">
-                          <th className="px-4 py-3 font-semibold">Status</th>
-                          <th className="px-4 py-3 font-semibold">Descrição</th>
-                          <th className="px-4 py-3 font-semibold">Categoria</th>
-                          <th className="px-4 py-3 font-semibold text-right">Valor</th>
-                          <th className="px-4 py-3 font-semibold text-center">Ações</th>
+                          <th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Descrição</th><th className="px-4 py-3 font-semibold">Categoria</th><th className="px-4 py-3 font-semibold text-right">Valor</th><th className="px-4 py-3 font-semibold text-center">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
@@ -609,31 +610,21 @@ export default function App() {
                           const catColors = CATEGORIAS[t.category] || CATEGORIAS['Outros'];
                           return (
                             <tr key={t.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors group">
-                              <td className="px-4 py-3">
-                                <button onClick={() => toggleStatus(t.id)} className="focus:outline-none" title="Desfazer pagamento"><CheckCircle2 size={20} className="text-emerald-500" /></button>
-                              </td>
+                              <td className="px-4 py-3"><button onClick={() => toggleStatus(t.id)}><CheckCircle2 size={20} className="text-emerald-500" /></button></td>
                               <td className="px-4 py-3 flex flex-col">
-                                <span className="font-medium text-gray-800 dark:text-gray-200 text-sm flex items-center gap-1.5">
-                                  {t.description} {t.isSubscription && <span title="Assinatura Contínua"><RefreshCw size={12} className="text-indigo-400" /></span>}
-                                </span>
+                                <span className="font-medium text-gray-800 dark:text-gray-200 text-sm flex items-center gap-1.5">{t.description} {t.isSubscription && <RefreshCw size={12} className="text-indigo-400" />}</span>
                                 <div className="flex items-center gap-2 mt-0.5">
                                   <span className="text-xs text-gray-400">{formatDate(t.date)}</span>
-                                  <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded" title={t.wallet || 'Conta Corrente'}>
-                                     <WalletIcon type={t.wallet} size={10} /> <span className="truncate max-w-[60px]">{t.wallet || 'Conta'}</span>
-                                  </span>
+                                  <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded"><WalletIcon type={t.wallet} size={10} /> <span className="truncate max-w-[60px]">{t.wallet || 'Conta'}</span></span>
                                 </div>
                               </td>
                               <td className="px-4 py-3">
-                                <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium ${catColors.bg} ${darkMode ? catColors.darkBg : ''} ${catColors.color}`}>
-                                  <CatIcon size={12} /> <span className="truncate max-w-[70px]">{t.category}</span>
-                                </div>
+                                <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium ${catColors.bg} ${darkMode ? catColors.darkBg : ''} ${catColors.color}`}><CatIcon size={12} /> <span>{t.category}</span></div>
                               </td>
                               <td className={`px-4 py-3 text-right text-sm font-medium ${t.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                                 {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
                               </td>
-                              <td className="px-4 py-3 text-center">
-                                <button onClick={() => handleDelete(t.id)} className="text-gray-300 hover:text-rose-500 dark:hover:text-rose-400 transition-colors p-1 rounded-md hover:bg-rose-50 dark:hover:bg-rose-900/30"><Trash2 size={16} /></button>
-                              </td>
+                              <td className="px-4 py-3 text-center"><button onClick={() => handleDelete(t.id)} className="text-gray-300 hover:text-rose-500 p-1"><Trash2 size={16} /></button></td>
                             </tr>
                           );
                         })}
@@ -643,7 +634,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* PENDENTES */}
               <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors flex flex-col h-full">
                 <div className="p-4 border-b border-gray-100 dark:border-gray-700 bg-amber-50/50 dark:bg-amber-900/10 flex justify-between items-center">
                   <h2 className="text-lg font-semibold text-amber-800 dark:text-amber-400 flex items-center gap-2">
@@ -661,10 +651,7 @@ export default function App() {
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-white dark:bg-gray-800 text-gray-400 text-[11px] uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">
-                          <th className="px-4 py-3 font-semibold">Pagar</th>
-                          <th className="px-4 py-3 font-semibold">Descrição / Data</th>
-                          <th className="px-4 py-3 font-semibold text-right">Valor</th>
-                          <th className="px-4 py-3 font-semibold text-center">Ações</th>
+                          <th className="px-4 py-3 font-semibold">Pagar</th><th className="px-4 py-3 font-semibold">Descrição / Data</th><th className="px-4 py-3 font-semibold text-right">Valor</th><th className="px-4 py-3 font-semibold text-center">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
@@ -672,25 +659,18 @@ export default function App() {
                           const isOverdue = t.date < todayStr;
                           return (
                             <tr key={t.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors group ${isOverdue ? 'bg-rose-50/30 dark:bg-rose-900/10' : ''}`}>
-                              <td className="px-4 py-3">
-                                <button onClick={() => toggleStatus(t.id)} className="focus:outline-none transform hover:scale-110 transition-transform" title={t.isSubscription ? "Pagar e gerar mês seguinte" : "Marcar como Pago"}><Circle size={22} className="text-amber-500 hover:text-emerald-500 hover:fill-emerald-100" /></button>
-                              </td>
+                              <td className="px-4 py-3"><button onClick={() => toggleStatus(t.id)}><Circle size={22} className="text-amber-500 hover:text-emerald-500" /></button></td>
                               <td className="px-4 py-3 flex flex-col">
-                                <span className="font-medium text-gray-800 dark:text-gray-200 text-sm flex items-center gap-1.5">
-                                  {t.description} {t.isSubscription && <span title="Assinatura Contínua"><RefreshCw size={12} className="text-amber-500" /></span>}
-                                </span>
+                                <span className="font-medium text-gray-800 dark:text-gray-200 text-sm flex items-center gap-1.5">{t.description} {t.isSubscription && <RefreshCw size={12} className="text-amber-500" />}</span>
                                 <div className="flex items-center gap-2 mt-0.5">
                                   <span className={`text-xs ${isOverdue ? 'text-rose-500 font-bold' : 'text-gray-500 dark:text-gray-400'}`}>{formatDate(t.date)}</span>
-                                  {isOverdue && <span className="bg-rose-100 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 text-[9px] uppercase px-1.5 rounded font-bold flex items-center gap-1"><AlertTriangle size={10}/> Atrasada</span>}
-                                  {!isOverdue && <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded" title={t.wallet || 'Conta Corrente'}><WalletIcon type={t.wallet} size={10} /></span>}
+                                  {isOverdue ? <span className="bg-rose-100 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 text-[9px] uppercase px-1.5 rounded font-bold flex items-center gap-1"><AlertTriangle size={10}/> Atrasada</span> : <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded"><WalletIcon type={t.wallet} size={10} /></span>}
                                 </div>
                               </td>
                               <td className={`px-4 py-3 text-right text-sm font-bold ${t.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                                 {formatCurrency(t.amount)}
                               </td>
-                              <td className="px-4 py-3 text-center">
-                                <button onClick={() => handleDelete(t.id)} className="text-gray-300 hover:text-rose-500 dark:hover:text-rose-400 transition-colors p-1 rounded-md hover:bg-rose-50 dark:hover:bg-rose-900/30"><Trash2 size={16} /></button>
-                              </td>
+                              <td className="px-4 py-3 text-center"><button onClick={() => handleDelete(t.id)} className="text-gray-300 hover:text-rose-500 p-1"><Trash2 size={16} /></button></td>
                             </tr>
                           );
                         })}
@@ -702,26 +682,17 @@ export default function App() {
             </div>
           </>
         ) : (
-          /* ABA DE GRÁFICOS E RELATÓRIOS */
           <div className="space-y-6">
-            
-            {/* NOVIDADE: CONSELHEIRO IA */}
             <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-2xl shadow-sm p-6 text-white relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none"><Sparkles size={120} /></div>
                 <div className="relative z-10 flex flex-col md:flex-row gap-6 items-center">
-                   <div className="flex-shrink-0 bg-white/20 p-4 rounded-full backdrop-blur-sm">
-                      <Bot size={40} className="text-white" />
-                   </div>
+                   <div className="flex-shrink-0 bg-white/20 p-4 rounded-full backdrop-blur-sm"><Bot size={40} className="text-white" /></div>
                    <div className="flex-1 text-center md:text-left">
                       <h2 className="text-xl font-bold mb-2 flex items-center justify-center md:justify-start gap-2">Conselheiro Financeiro IA</h2>
-                      {advisorAdvice ? (
-                          <p className="text-purple-100 italic leading-relaxed">"{advisorAdvice}"</p>
-                      ) : (
-                          <p className="text-purple-200">A Inteligência Artificial pode analisar os seus gastos deste mês e dar-lhe uma dica preciosa de gestão financeira.</p>
-                      )}
+                      {advisorAdvice ? <p className="text-purple-100 italic leading-relaxed">"{advisorAdvice}"</p> : <p className="text-purple-200">A IA pode analisar os seus gastos deste mês e dar-lhe uma dica preciosa.</p>}
                    </div>
                    <div className="flex-shrink-0">
-                      <button onClick={handleGetAdvisorAdvice} disabled={isAdvisorLoading} className="bg-white text-purple-700 hover:bg-purple-50 px-5 py-2.5 rounded-xl font-bold shadow-lg transition-transform transform hover:scale-105 disabled:opacity-50 disabled:scale-100 flex items-center gap-2">
+                      <button onClick={handleGetAdvisorAdvice} disabled={isAdvisorLoading} className="bg-white text-purple-700 hover:bg-purple-50 px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center gap-2">
                           {isAdvisorLoading ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
                           {advisorAdvice ? 'Pedir novo conselho' : 'Analisar meu Mês'}
                       </button>
@@ -730,7 +701,6 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Gráficos Normais - Orçamentos */}
               <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
                 <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-6 flex items-center gap-2"><Target size={20} className="text-indigo-500" /> Orçamentos e Gastos Atuais</h2>
                 <div className="space-y-5">
@@ -759,7 +729,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Gráfico Pizza */}
               <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col">
                 <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-6 flex items-center gap-2"><PieChart size={20} className="text-indigo-500" /> Distribuição</h2>
                 <div className="flex-1 flex flex-col justify-center">
@@ -792,14 +761,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Comparativo de Meses */}
               <div className="lg:col-span-2 bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-2">
                   <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2"><TrendingDown size={20} className="text-indigo-500" /> Comparativo de Despesas</h2>
                   <div className="flex items-center gap-2 text-sm font-medium px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg">
-                    <input type="month" value={`${compareDate.getFullYear()}-${String(compareDate.getMonth() + 1).padStart(2, '0')}`} onChange={(e) => { if(e.target.value) { const [y, m] = e.target.value.split('-'); setCompareDate(new Date(parseInt(y), parseInt(m) - 1, 15)); } }} className="bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded px-2 py-0.5 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer" />
+                    <input type="month" value={`${compareDate.getFullYear()}-${String(compareDate.getMonth() + 1).padStart(2, '0')}`} onChange={(e) => { if(e.target.value) { const [y, m] = e.target.value.split('-'); setCompareDate(new Date(parseInt(y), parseInt(m) - 1, 15)); } }} className="bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded outline-none" />
                     <span>vs</span>
-                    <input type="month" value={`${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`} onChange={(e) => { if(e.target.value) { const [y, m] = e.target.value.split('-'); setCurrentDate(new Date(parseInt(y), parseInt(m) - 1, 15)); } }} className="bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded px-2 py-0.5 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer" />
+                    <input type="month" value={`${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`} onChange={(e) => { if(e.target.value) { const [y, m] = e.target.value.split('-'); setCurrentDate(new Date(parseInt(y), parseInt(m) - 1, 15)); } }} className="bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded outline-none" />
                   </div>
                 </div>
 
@@ -823,7 +791,7 @@ export default function App() {
                               <td className="py-4 px-4 text-right text-gray-500">{formatCurrency(stat.previous)}</td><td className="py-4 px-4 text-right font-medium text-gray-800 dark:text-gray-200">{formatCurrency(stat.current)}</td>
                               <td className="py-4 px-4 text-right">
                                 <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${isMore ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400' : isLess ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
-                                  {isMore ? <ArrowUpRight size={14} /> : isLess ? <ArrowDownRight size={14} /> : <Minus size={14} />}{isSame ? 'Manteve' : `${isMore ? 'Gastou mais ' : 'Economizou '}${formatCurrency(Math.abs(stat.diff))}`}
+                                  {isMore ? <ArrowUpRight size={14} /> : isLess ? <ArrowDownRight size={14} /> : <Minus size={14} />}{isSame ? 'Manteve' : `${isMore ? 'Mais ' : 'Menos '}${formatCurrency(Math.abs(stat.diff))}`}
                                 </div>
                               </td>
                             </tr>
@@ -845,7 +813,7 @@ export default function App() {
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center sticky top-0 bg-white dark:bg-gray-800 z-10">
               <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">Nova Transação</h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"><X size={24} /></button>
+              <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
             </div>
             
             <form onSubmit={handleAddTransaction} className="p-6 space-y-4">
@@ -856,17 +824,17 @@ export default function App() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Descrição</label>
-                <input type="text" required value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Conta de Luz, Uber, Netflix" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                <input type="text" required value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Conta de Luz, Uber, Netflix" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Valor (R$)</label>
-                  <input type="number" required min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                  <input type="number" required min="0.01" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Categoria</label>
-                  <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                  <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
                     {type === 'expense' ? (
                       <><option value="Alimentação">Alimentação</option><option value="Transporte">Transporte</option><option value="Moradia">Moradia</option><option value="Contas">Contas</option><option value="Compras">Compras</option><option value="Lazer">Lazer</option><option value="Saúde">Saúde</option><option value="Educação">Educação</option><option value="Viagens">Viagens</option><option value="Pets">Pets</option><option value="Outros">Outros</option></>
                     ) : (
@@ -879,11 +847,11 @@ export default function App() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data</label>
-                  <input type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                  <input type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
-                  <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                  <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
                     <option value="paid">✅ Já Pago</option>
                     <option value="pending">⏳ Pendente</option>
                   </select>
@@ -893,7 +861,7 @@ export default function App() {
               <div className="grid grid-cols-2 gap-4 border-t border-gray-100 dark:border-gray-700 pt-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 flex items-center gap-1"><CreditCard size={14}/> Carteira</label>
-                  <select value={wallet} onChange={(e) => setWallet(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                  <select value={wallet} onChange={(e) => setWallet(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
                     <option value="Conta Corrente">🏦 Conta Corrente</option>
                     <option value="Cartão de Crédito">💳 Cartão de Crédito</option>
                     <option value="Dinheiro">💵 Dinheiro Físico</option>
@@ -901,7 +869,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 flex items-center gap-1"><Repeat size={14}/> Repetição</label>
-                  <select value={recurrenceType} onChange={(e) => setRecurrenceType(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                  <select value={recurrenceType} onChange={(e) => setRecurrenceType(e.target.value)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
                     <option value="none">Não repete</option>
                     <option value="installments">Parcelado</option>
                     <option value="subscription">♾️ Assinatura Contínua</option>
@@ -912,19 +880,19 @@ export default function App() {
               {recurrenceType === 'installments' && (
                 <div className="animate-in fade-in slide-in-from-top-2">
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Número de Parcelas</label>
-                  <input type="number" min="2" max="48" value={installments} onChange={(e) => setInstallments(parseInt(e.target.value) || 2)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                  <input type="number" min="2" max="48" value={installments} onChange={(e) => setInstallments(parseInt(e.target.value) || 2)} className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
                 </div>
               )}
 
               {recurrenceType === 'subscription' && (
                 <p className="text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 p-2 rounded-lg border border-indigo-100 dark:border-indigo-800">
-                  <strong className="flex items-center gap-1"><RefreshCw size={12}/> Assinatura Inteligente ativada.</strong>
-                  Quando der "Baixa" nesta conta, o aplicativo criará automaticamente a fatura do próximo mês por si!
+                  <strong className="flex items-center gap-1"><RefreshCw size={12}/> Assinatura Inteligente.</strong>
+                  Quando der "Baixa" nesta conta, o aplicativo criará automaticamente a fatura do mês seguinte!
                 </p>
               )}
 
               <div className="pt-2">
-                <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg transition-colors shadow-sm flex justify-center items-center gap-2">
+                <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg flex justify-center items-center gap-2">
                   <Plus size={18} /> Salvar {recurrenceType === 'installments' && installments > 1 ? `${installments} Transações` : 'Transação'}
                 </button>
               </div>
@@ -939,15 +907,15 @@ export default function App() {
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-teal-50 dark:bg-teal-900/20">
               <h3 className="text-lg font-semibold text-teal-800 dark:text-teal-300 flex items-center gap-2"><Receipt size={22} /> Leitor de Comprovante</h3>
-              <button onClick={() => !isReceiptImporting && setIsReceiptImportOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors" disabled={isReceiptImporting}><X size={24} /></button>
+              <button onClick={() => !isReceiptImporting && setIsReceiptImportOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" disabled={isReceiptImporting}><X size={24} /></button>
             </div>
             <div className="p-6">
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 text-center">Envie o <strong className="text-teal-600 dark:text-teal-400">PDF ou Print</strong> do comprovante. Se for uma conta pendente, o sistema dá baixa. Se for nova, ele adiciona!</p>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 text-center">Envie o <strong className="text-teal-600 dark:text-teal-400">PDF ou Print</strong> do comprovante para registar automaticamente.</p>
               {receiptImportMessage.text && <div className={`mb-4 p-3 text-sm rounded-lg border ${receiptImportMessage.type === 'error' ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-600 border-rose-200 dark:border-rose-800' : 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 border-emerald-200 dark:border-emerald-800'}`}>{receiptImportMessage.text}</div>}
               <div className="relative">
                 <input type="file" accept="image/*,application/pdf" onChange={handleReceiptImport} disabled={isReceiptImporting || receiptImportMessage.type === 'success'} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed z-10" />
                 <div className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 transition-colors ${isReceiptImporting ? 'border-teal-300 bg-teal-50 dark:border-teal-700 dark:bg-teal-900/20' : 'border-gray-300 hover:border-teal-500 hover:bg-teal-50 dark:border-gray-600 dark:hover:border-teal-500 dark:hover:bg-gray-700'}`}>
-                  {isReceiptImporting ? <><Loader2 size={40} className="text-teal-500 animate-spin mb-3" /><p className="text-teal-700 dark:text-teal-400 font-medium text-center">A ler...<br/><span className="text-sm opacity-80">Demora cerca de 5 a 10s</span></p></> : <><UploadCloud size={40} className="text-gray-400 mb-3" /><p className="text-gray-700 dark:text-gray-300 font-medium text-center">Toque para enviar Comprovante</p><p className="text-gray-400 dark:text-gray-500 text-xs mt-1">Imagens (PNG/JPG) e PDF</p></>}
+                  {isReceiptImporting ? <><Loader2 size={40} className="text-teal-500 animate-spin mb-3" /><p className="text-teal-700 dark:text-teal-400 font-medium text-center">A ler...<br/><span className="text-sm opacity-80">Cerca de 5s</span></p></> : <><UploadCloud size={40} className="text-gray-400 mb-3" /><p className="text-gray-700 dark:text-gray-300 font-medium text-center">Toque para enviar Comprovante</p><p className="text-gray-400 dark:text-gray-500 text-xs mt-1">Imagens (PNG/JPG) e PDF</p></>}
                 </div>
               </div>
             </div>
