@@ -84,10 +84,9 @@ export default function App() {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           try {
-             // Tenta usar o token do ambiente (pode falhar com configurações personalizadas do Firebase)
              await signInWithCustomToken(auth, __initial_auth_token);
           } catch (tokenError) {
-             console.warn("Token incompatível detetado (normal ao usar o seu próprio Firebase). A mudar para login anónimo...");
+             console.warn("Mudar para login anónimo...");
              await signInAnonymously(auth);
           }
         } else {
@@ -357,10 +356,47 @@ export default function App() {
     }
   };
 
+  // --- NOVO SISTEMA INTELIGENTE DE BUSCA DE MODELOS DA IA ---
+  // Se um modelo falhar na sua conta, ele testa os outros automaticamente.
+  const callGeminiAPI = async (payload) => {
+      if (!apiKey) throw new Error("Chave da API não encontrada. Cole-a no código.");
+      
+      const modelsToTry = [
+          'gemini-2.0-flash',
+          'gemini-1.5-flash',
+          'gemini-1.5-pro',
+          'gemini-1.5-flash-latest'
+      ];
+
+      let lastError = null;
+
+      for (const model of modelsToTry) {
+          try {
+              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+                  method: 'POST', 
+                  headers: { 'Content-Type': 'application/json' }, 
+                  body: JSON.stringify(payload)
+              });
+              
+              if (!res.ok) {
+                  const errData = await res.json();
+                  lastError = new Error(errData.error?.message || `Erro no ${model}`);
+                  continue; // Se falhou, tenta o próximo modelo da lista invisivelmente!
+              }
+              
+              return await res.json(); // Sucesso! Retorna os dados e para o loop.
+          } catch (e) {
+              lastError = e;
+          }
+      }
+      
+      // Se todos os modelos falharem, mostra o erro do último
+      throw lastError || new Error("Todos os modelos da IA falharam na sua região.");
+  };
+
   const handleGetAdvisorAdvice = async () => {
       setIsAdvisorLoading(true);
       try {
-          if (!apiKey) throw new Error("Chave da API não encontrada.");
           const topCategories = categoryStats.slice(0,3).map(c => `${c.category} (${formatCurrency(c.amount)})`).join(', ');
           const systemInstruction = `Você é um Conselheiro Financeiro amigável e super inteligente.
           Analise o resumo do mês deste usuário. O foco deve ser dar 1 dica ou insight construtivo, rápido e motivador (máximo 3 frases curtas).
@@ -373,28 +409,23 @@ export default function App() {
             systemInstruction: { parts: [{ text: systemInstruction }] }
           };
 
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-          });
-          
-          if (!res.ok) {
-              const errData = await res.json();
-              throw new Error(errData.error?.message || "Erro de comunicação com a IA.");
-          }
-          const responseData = await res.json();
+          const responseData = await callGeminiAPI(payload);
           setAdvisorAdvice(responseData.candidates[0].content.parts[0].text);
-      } catch(e) { setAdvisorAdvice(`Ops! Falhou: ${e.message}`); } finally { setIsAdvisorLoading(false); }
+      } catch(e) { 
+          setAdvisorAdvice(`Ops! Falhou: ${e.message}`); 
+      } finally { 
+          setIsAdvisorLoading(false); 
+      }
   };
 
   const handleReceiptImport = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    setIsReceiptImporting(true); setReceiptImportMessage({ type: '', text: '' });
+    setIsReceiptImporting(true); 
+    setReceiptImportMessage({ type: '', text: '' });
 
     try {
-      if (!apiKey) throw new Error("A chave da API (apiKey) está vazia no código.");
-
       let mimeType = file.type;
       let base64Data = "";
 
@@ -437,17 +468,14 @@ export default function App() {
         generationConfig: { responseMimeType: "application/json", responseSchema: { type: "OBJECT", properties: { description: { type: "STRING" }, amount: { type: "NUMBER" }, type: { type: "STRING" }, category: { type: "STRING" }, date: { type: "STRING" } }, required: ["description", "amount", "type", "date"] } }
       };
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-      });
+      // Usa a nova função à prova de falhas para a IA
+      const responseData = await callGeminiAPI(payload);
       
-      if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error?.message || "Servidor da IA recusou a imagem.");
-      }
-
-      const responseData = await res.json();
-      const extracted = JSON.parse(responseData.candidates[0].content.parts[0].text);
+      // Limpeza de segurança caso a IA envie o JSON com aspas erradas
+      let rawText = responseData.candidates[0].content.parts[0].text;
+      rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const extracted = JSON.parse(rawText);
+      
       const matchIndex = transactions.findIndex(t => t.status === 'pending' && t.type === extracted.type && Math.abs(t.amount - extracted.amount) <= 2.0);
 
       if (matchIndex >= 0) {
@@ -479,7 +507,12 @@ export default function App() {
           setReceiptImportMessage({ type: 'success', text: `Novo comprovante registado como Pago ✅` });
       }
       setTimeout(() => setIsReceiptImportOpen(false), 4500);
-    } catch (err) { setReceiptImportMessage({ type: 'error', text: `Falhou: ${err.message}` }); } finally { setIsReceiptImporting(false); e.target.value = ''; }
+    } catch (err) { 
+        setReceiptImportMessage({ type: 'error', text: `Falhou: ${err.message}` }); 
+    } finally { 
+        setIsReceiptImporting(false); 
+        if(e.target) e.target.value = ''; 
+    }
   };
 
   const todayStr = new Date().toISOString().split('T')[0];
