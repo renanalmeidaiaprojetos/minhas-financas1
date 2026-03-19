@@ -13,8 +13,8 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
-// ⚠️ ATENÇÃO: Cole a sua NOVA chave da Google aqui!
-const apiKey = "AIzaSyCsJng6N_F08x8CN2TDZrA339sDdzigN6g"; 
+// ⚠️ ATENÇÃO: Cole a sua NOVA chave do Google AI Studio (Gemini) aqui!
+const apiKey = ""; 
 
 const DADOS_INICIAIS = [
   { id: '1', description: 'Salário', amount: 4500.00, type: 'income', category: 'Trabalho', date: '2026-03-01', status: 'paid', wallet: 'Conta Corrente', isSubscription: false },
@@ -44,14 +44,19 @@ const CATEGORIAS = {
 const ORCAMENTOS_PADRAO = { 'Alimentação': 1000, 'Transporte': 500, 'Moradia': 2000, 'Contas': 800, 'Lazer': 400 };
 
 // --- CONFIGURAÇÃO DA NUVEM (FIREBASE) ---
-let app, auth, db, appId;
-if (typeof __firebase_config !== 'undefined') {
-    const firebaseConfig = JSON.parse(__firebase_config);
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-}
+const firebaseConfig = {
+  apiKey: "AIzaSyA_Es59NlEqDnOe_dhjcpHSrGVdrUgeLjQ",
+  authDomain: "financas-familia-ff3e9.firebaseapp.com",
+  projectId: "financas-familia-ff3e9",
+  storageBucket: "financas-familia-ff3e9.firebasestorage.app",
+  messagingSenderId: "595446987229",
+  appId: "1:595446987229:web:827cc2dac148c8ab05de34"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = "cofre-da-familia"; 
 
 export default function App() {
   const [transactions, setTransactions] = useState([]);
@@ -78,7 +83,13 @@ export default function App() {
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+          try {
+             // Tenta usar o token do ambiente (pode falhar com configurações personalizadas do Firebase)
+             await signInWithCustomToken(auth, __initial_auth_token);
+          } catch (tokenError) {
+             console.warn("Token incompatível detetado (normal ao usar o seu próprio Firebase). A mudar para login anónimo...");
+             await signInAnonymously(auth);
+          }
         } else {
           await signInAnonymously(auth);
         }
