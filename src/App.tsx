@@ -236,11 +236,6 @@ export default function App() {
   const [fundsAmount, setFundsAmount] = useState('');
   const [selectedCalendarDay, setSelectedCalendarDay] = useState(null);
 
-  // Estados dos Comprovantes
-  const [isReceiptImportOpen, setIsReceiptImportOpen] = useState(false);
-  const [isReceiptImporting, setIsReceiptImporting] = useState(false);
-  const [receiptImportMessage, setReceiptImportMessage] = useState({ type: '', text: '' });
-
   // Filtros e Cálculos
   const upcomingBills = useMemo(() => {
     const today = new Date(); today.setHours(0,0,0,0);
@@ -676,112 +671,6 @@ export default function App() {
       } catch(e) { setAdvisorAdvice(`Ops! Falhou: ${e.message}`); } finally { setIsAdvisorLoading(false); }
   };
 
-  // --- IA: PREPARADA PARA LER ARRAYS (MÚLTIPLOS RECEBIMENTOS) ---
-  const handleReceiptImport = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    
-    if (!geminiApiKey) {
-        setIsReceiptImportOpen(false);
-        setIsApiKeyModalOpen(true);
-        e.target.value = '';
-        return;
-    }
-    
-    setIsReceiptImporting(true); setReceiptImportMessage({ type: '', text: '' });
-    try {
-      let mimeType = file.type; let base64Data = "";
-      if (file.type.startsWith('image/')) {
-          base64Data = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              const img = new Image();
-              img.onload = () => {
-                const canvas = document.createElement('canvas');
-                let width = img.width; let height = img.height; const maxSize = 800; 
-                if (width > height && width > maxSize) { height *= maxSize / width; width = maxSize; } 
-                else if (height > maxSize) { width *= maxSize / height; height = maxSize; }
-                canvas.width = width; canvas.height = height;
-                const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
-                resolve(canvas.toDataURL('image/jpeg', 0.7).split(',')[1]); 
-              };
-              img.onerror = () => reject(new Error("Falha ao processar a imagem da câmara."));
-              img.src = reader.result;
-            };
-            reader.onerror = () => reject(new Error("Falha ao ler o ficheiro no telemóvel."));
-            reader.readAsDataURL(file);
-          });
-          mimeType = 'image/jpeg';
-      } else {
-          base64Data = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result.split(',')[1]);
-              reader.onerror = () => reject(new Error("Falha ao ler o ficheiro PDF."));
-              reader.readAsDataURL(file);
-          });
-      }
-
-      // O Cérebro foi adaptado para retornar um Array!
-      const systemInstruction = `Você é um assistente financeiro inteligente. Analise a imagem (pode ser um único comprovante ou um print de extrato com vários recebimentos/pagamentos).
-      Retorne APENAS um ARRAY de objetos JSON. Cada objeto deve ter:
-      'description' (Nome curto do cliente ou loja),
-      'amount' (Valor exato em número),
-      'type' (Use 'income' para dinheiro recebido/PIX, ou 'expense' para pagamentos efetuados),
-      'category' (Categoria padrão, ex: Trabalho, Alimentação),
-      'date' (YYYY-MM-DD. Se não tiver data, use a data de hoje).
-      Se for apenas 1 comprovante, retorne um array de 1 item. NÃO adicione texto extra.`;
-
-      const payload = {
-        contents: [{ role: "user", parts: [{ text: "Extraia os dados num Array de JSON." }, { inlineData: { mimeType, data: base64Data } }] }],
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-        generationConfig: { responseMimeType: "application/json" }
-      };
-
-      const responseData = await callGeminiAPI(payload);
-      let rawText = responseData.candidates[0].content.parts[0].text;
-      rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-      
-      let extractedArray = JSON.parse(rawText);
-      if (!Array.isArray(extractedArray)) extractedArray = [extractedArray];
-
-      let newRecordsCount = 0;
-      let offlineTransactions = [...transactions];
-
-      for (const extracted of extractedArray) {
-          const matchIndex = offlineTransactions.findIndex(t => t.status === 'pending' && t.type === extracted.type && Math.abs(t.amount - extracted.amount) <= 2.0);
-
-          if (matchIndex >= 0) {
-              const updatedTx = { ...offlineTransactions[matchIndex], status: 'paid', date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : offlineTransactions[matchIndex].date };
-              if (db && user) {
-                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', updatedTx.id), updatedTx);
-              } else {
-                  offlineTransactions[matchIndex] = updatedTx;
-              }
-              newRecordsCount++;
-          } else {
-              const newTx = {
-                id: crypto.randomUUID(), description: extracted.description || 'Lançamento IA', amount: parseFloat(extracted.amount) || 0, type: extracted.type === 'income' ? 'income' : 'expense',
-                category: extracted.category || 'Outros', date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : new Date().toISOString().split('T')[0],
-                status: 'paid', wallet: accounts.length > 0 ? accounts[0].name : 'Conta Corrente', payer: 'Conjunto', expenseCategory: '', isSubscription: false
-              };
-              if (db && user) {
-                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', newTx.id), newTx);
-              } else {
-                  offlineTransactions.push(newTx);
-              }
-              newRecordsCount++;
-          }
-      }
-      
-      if (!db || !user) {
-          setTransactions(offlineTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)));
-      }
-
-      setReceiptImportMessage({ type: 'success', text: `${newRecordsCount} lançamento(s) registado(s) com Sucesso ✅` });
-      setTimeout(() => setIsReceiptImportOpen(false), 4500);
-    } catch (err) { setReceiptImportMessage({ type: 'error', text: `Falhou: ${err.message}` }); } finally { setIsReceiptImporting(false); if(e.target) e.target.value = ''; }
-  };
-
   const todayStr = new Date().toISOString().split('T')[0];
   const paidTransactions = filteredTransactions.filter(t => t.status === 'paid');
   const pendingTransactions = filteredTransactions.filter(t => t.status === 'pending');
@@ -847,9 +736,6 @@ export default function App() {
               
               <button onClick={() => setIsPlanilhaModalOpen(true)} className="bg-indigo-700 hover:bg-indigo-800 dark:bg-indigo-950 dark:hover:bg-indigo-900 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm text-white" title="Importar Planilha Antiga">
                 <Database size={20} /> <span className="hidden xl:inline">Planilha</span>
-              </button>
-              <button onClick={() => { setReceiptImportMessage({type: '', text: ''}); setIsReceiptImportOpen(true); }} className="bg-teal-500 hover:bg-teal-400 dark:bg-teal-700 dark:hover:bg-teal-600 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm text-white" title="Ler Comprovante (IA)">
-                <Receipt size={20} /> <span className="hidden lg:inline">Extrato / IA</span>
               </button>
               <button onClick={() => { resetForm(); setIsModalOpen(true); }} className="bg-indigo-500 hover:bg-indigo-400 dark:bg-indigo-700 dark:hover:bg-indigo-600 px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm">
                 <Plus size={20} /> <span className="hidden sm:inline">Nova Despesa</span>
@@ -1668,27 +1554,6 @@ export default function App() {
                     </div>
                  </>
              )}
-          </div>
-        </div>
-      )}
-
-      {isReceiptImportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-teal-50 dark:bg-teal-900/20">
-              <h3 className="text-lg font-semibold text-teal-800 dark:text-teal-300 flex items-center gap-2"><Receipt size={22} /> Leitor de Receitas / Comprovantes</h3>
-              <button onClick={() => !isReceiptImporting && setIsReceiptImportOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" disabled={isReceiptImporting}><X size={24} /></button>
-            </div>
-            <div className="p-6">
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 text-center">Envie o <strong className="text-teal-600 dark:text-teal-400">PDF ou Print</strong> (pode ser um print com vários PIX recebidos) para registar tudo automaticamente.</p>
-              {receiptImportMessage.text && <div className={`mb-4 p-3 text-sm rounded-lg border ${receiptImportMessage.type === 'error' ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-600 border-rose-200 dark:border-rose-800' : 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 border-emerald-200 dark:border-emerald-800'}`}>{receiptImportMessage.text}</div>}
-              <div className="relative">
-                <input type="file" accept="image/*,application/pdf" onChange={handleReceiptImport} disabled={isReceiptImporting || receiptImportMessage.type === 'success'} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed z-10" />
-                <div className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 transition-colors ${isReceiptImporting ? 'border-teal-300 bg-teal-50 dark:border-teal-700 dark:bg-teal-900/20' : 'border-gray-300 hover:border-teal-500 hover:bg-teal-50 dark:border-gray-600 dark:hover:border-teal-500 dark:hover:bg-gray-700'}`}>
-                  {isReceiptImporting ? <><Loader2 size={40} className="text-teal-500 animate-spin mb-3" /><p className="text-teal-700 dark:text-teal-400 font-medium text-center">A ler...<br/><span className="text-sm opacity-80">A analisar a imagem</span></p></> : <><UploadCloud size={40} className="text-gray-400 mb-3" /><p className="text-gray-700 dark:text-gray-300 font-medium text-center">Toque para enviar Imagem</p><p className="text-gray-400 dark:text-gray-500 text-xs mt-1">Imagens (PNG/JPG) e PDF</p></>}
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       )}
