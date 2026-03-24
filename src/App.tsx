@@ -88,7 +88,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isCloudLoading, setIsCloudLoading] = useState(true);
 
-  // NOVO: Cofre local seguro para a sua chave da IA (nunca mais vai para o GitHub)
+  // Cofre local seguro para a sua chave da IA (nunca mais vai para o GitHub)
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('financas_gemini_key') || '');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
@@ -193,7 +193,7 @@ export default function App() {
   const [advisorAdvice, setAdvisorAdvice] = useState('');
   const [isAdvisorLoading, setIsAdvisorLoading] = useState(false);
 
-  // NOVO: Estados da Modal de Venda/Recebimento Rápido
+  // Estados da Modal de Venda/Recebimento Rápido
   const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false);
   const [quickAmount, setQuickAmount] = useState('');
   const [quickPayer, setQuickPayer] = useState('Conjunto');
@@ -641,7 +641,7 @@ export default function App() {
           throw new Error("A chave de API não está configurada! Por favor, insira a sua chave nas definições.");
       }
       
-      const model = 'gemini-2.5-flash-preview-09-2025'; // Versão mais estável e recomendada
+      const model = 'gemini-1.5-flash'; // CORRIGIDO: Versão pública e estável
       try {
           const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
