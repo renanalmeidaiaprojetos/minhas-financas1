@@ -14,9 +14,6 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
-// ⚠️ ATENÇÃO: Cole a sua NOVA chave do Google AI Studio (Gemini) aqui!
-const apiKey = "AIzaSyCGm-S66h_JRcw7_5hfql6fclXHILDuuVA"; 
-
 const DADOS_INICIAIS = [
   { id: '1', description: 'Salário', amount: 4500.00, type: 'income', expenseCategory: '', category: 'Trabalho', date: '2026-03-01', status: 'paid', wallet: 'Nubank Renan', isSubscription: false, payer: 'Renan' },
   { id: '2', description: 'Aluguel', amount: 1200.00, type: 'expense', expenseCategory: 'Fixa', category: 'Moradia', date: '2026-03-05', status: 'paid', wallet: 'Nubank Esposa', isSubscription: true, payer: 'Esposa' }
@@ -90,6 +87,11 @@ export default function App() {
   const [accounts, setAccounts] = useState(CONTAS_INICIAIS);
   const [user, setUser] = useState(null);
   const [isCloudLoading, setIsCloudLoading] = useState(true);
+
+  // NOVO: Cofre local seguro para a sua chave da IA (nunca mais vai para o GitHub)
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('financas_gemini_key') || '');
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [tempApiKey, setTempApiKey] = useState('');
 
   const [darkMode, setDarkMode] = useState(() => {
     return localStorage.getItem('financas_app_theme') === 'dark';
@@ -174,9 +176,10 @@ export default function App() {
         localStorage.setItem('financas_app_accounts', JSON.stringify(accounts));
     }
     localStorage.setItem('financas_app_theme', darkMode ? 'dark' : 'light');
+    localStorage.setItem('financas_gemini_key', geminiApiKey); // Guarda a chave de forma segura no telemóvel
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
-  }, [darkMode, transactions, budgets, goals, accounts]);
+  }, [darkMode, transactions, budgets, goals, accounts, geminiApiKey]);
 
   // Modais e Estados da Interface
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -633,10 +636,14 @@ export default function App() {
   };
 
   const callGeminiAPI = async (payload) => {
-      if (!apiKey) throw new Error("Chave da API não encontrada. Cole-a no código.");
-      const model = 'gemini-1.5-flash';
+      if (!geminiApiKey) {
+          setIsApiKeyModalOpen(true);
+          throw new Error("A chave de API não está configurada! Por favor, insira a sua chave nas definições.");
+      }
+      
+      const model = 'gemini-2.5-flash-preview-09-2025'; // Versão mais estável e recomendada
       try {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
           });
           if (!res.ok) { const errData = await res.json(); throw new Error(errData.error?.message || "Erro na API do Google."); }
@@ -645,6 +652,11 @@ export default function App() {
   };
 
   const handleGetAdvisorAdvice = async () => {
+      if (!geminiApiKey) {
+          setIsApiKeyModalOpen(true);
+          return;
+      }
+      
       setIsAdvisorLoading(true);
       try {
           const topCategories = categoryStats.slice(0,3).map(c => `${c.category} (${formatCurrency(c.amount)})`).join(', ');
@@ -664,10 +676,18 @@ export default function App() {
       } catch(e) { setAdvisorAdvice(`Ops! Falhou: ${e.message}`); } finally { setIsAdvisorLoading(false); }
   };
 
-  // --- NOVA IA: PREPARADA PARA LER ARRAYS (MÚLTIPLOS RECEBIMENTOS) ---
+  // --- IA: PREPARADA PARA LER ARRAYS (MÚLTIPLOS RECEBIMENTOS) ---
   const handleReceiptImport = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    
+    if (!geminiApiKey) {
+        setIsReceiptImportOpen(false);
+        setIsApiKeyModalOpen(true);
+        e.target.value = '';
+        return;
+    }
+    
     setIsReceiptImporting(true); setReceiptImportMessage({ type: '', text: '' });
     try {
       let mimeType = file.type; let base64Data = "";
@@ -734,7 +754,6 @@ export default function App() {
               const updatedTx = { ...offlineTransactions[matchIndex], status: 'paid', date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : offlineTransactions[matchIndex].date };
               if (db && user) {
                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', updatedTx.id), updatedTx);
-                  // Lógica de assinatura simplificada
               } else {
                   offlineTransactions[matchIndex] = updatedTx;
               }
@@ -818,6 +837,12 @@ export default function App() {
                   </div>
                 )}
               </div>
+              
+              {/* BOTÃO DE CONFIGURAÇÃO DA IA (NOVO) */}
+              <button onClick={() => { setTempApiKey(geminiApiKey); setIsApiKeyModalOpen(true); }} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Configurar Inteligência Artificial">
+                <Sparkles size={20} className={geminiApiKey ? "text-yellow-300" : "text-gray-300"} />
+              </button>
+              
               <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-full hover:bg-white/10 transition-colors"><Sun size={20} className="hidden dark:block"/><Moon size={20} className="dark:hidden" /></button>
               
               <button onClick={() => setIsPlanilhaModalOpen(true)} className="bg-indigo-700 hover:bg-indigo-800 dark:bg-indigo-950 dark:hover:bg-indigo-900 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm text-white" title="Importar Planilha Antiga">
@@ -1517,6 +1542,27 @@ export default function App() {
                 <CheckCircle2 size={24} /> Guardar Receita
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* NOVA MODAL: CONFIGURAR CHAVE DA IA */}
+      {isApiKeyModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md p-6 text-center animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Sparkles size={32} />
+            </div>
+            <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">Configurar IA</h3>
+            <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm">
+              Para usar o Leitor de Comprovantes e Dicas Inteligentes, cole a sua chave do <strong>Google AI Studio</strong> abaixo.<br/><br/>
+              <span className="text-purple-600 dark:text-purple-400 font-medium">Ela ficará guardada apenas no seu navegador por segurança!</span>
+            </p>
+            <input type="text" value={tempApiKey} onChange={(e) => setTempApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 outline-none mb-4 font-mono text-sm" />
+            <div className="flex gap-3">
+              <button onClick={() => setIsApiKeyModalOpen(false)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-xl font-medium transition-colors">Cancelar</button>
+              <button onClick={() => { setGeminiApiKey(tempApiKey); setIsApiKeyModalOpen(false); }} className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors">Guardar Chave</button>
+            </div>
           </div>
         </div>
       )}
