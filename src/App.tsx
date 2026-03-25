@@ -6,7 +6,7 @@ import {
   X, PieChart, ChevronLeft, ChevronRight, CalendarDays, BarChart3,
   Gamepad2, HeartPulse, GraduationCap, PiggyBank, Plane, Cat,
   Moon, Sun, Download, Search, CheckCircle2, Circle, Repeat, Target,
-  ArrowUpRight, ArrowDownRight, Minus, UploadCloud, Loader2,
+  ArrowUpRight, ArrowDownRight, Minus, Loader2,
   Bell, CreditCard, Sparkles, RefreshCw, Banknote, Landmark, AlertTriangle, Bot,
   Database, Check, User, Users, Building, Edit2, Pin, TrendingUp as TrendUpIcon
 } from 'lucide-react';
@@ -45,7 +45,6 @@ const CATEGORIAS = {
 
 const ORCAMENTOS_PADRAO = { 'Alimentação': 1000, 'Transporte': 500, 'Moradia': 2000, 'Contas': 800, 'Lazer': 400 };
 
-// --- LEITURA FEITA PELA IA DA SUA PLANILHA ANTIGA ---
 const RAW_PLANILHA = [
   { day: 1, desc: 'CARTÃO WASHINGTON', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Conjunto', wallet: 'Cartão de Crédito', values: [200, 200, 716.68, 716.68, 716.68, 550, 350, 350] },
   { day: 10, desc: 'CLARO RESIDENCIAL', type: 'expense', expenseCategory: 'Fixa', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [314.91, 321.84, 320, 320, 320, 320, 320, 320, 320, 320, 320, 320] },
@@ -576,6 +575,14 @@ export default function App() {
           setTransactions(transactions.filter(t => !ids.includes(t.id)));
       }
       setDeleteConfig(null);
+  };
+
+  const exportCSV = () => {
+    const headers = "Data,Descrição,Categoria,Tipo,Valor,Conta,Pagador,Status\n";
+    const rows = transactions.map(t => `${t.date},${t.description},${t.category},${t.type === 'income' ? 'Receita' : 'Despesa'},${t.amount},${t.wallet || 'N/A'},${t.payer || 'Conjunto'},${t.status === 'paid' ? 'Pago' : 'Pendente'}`).join("\n");
+    const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `financas_${new Date().toISOString().split('T')[0]}.csv`; a.click();
   };
 
   const updateBudget = async (cat) => {
@@ -1390,6 +1397,39 @@ export default function App() {
         </div>
       )}
 
+      {/* MODAL DO BOTÃO FLUTUANTE DE VENDA RÁPIDA (NOVO) */}
+      {isQuickAddModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-emerald-500 text-white">
+              <h3 className="text-xl font-bold flex items-center gap-2"><DollarSign size={24} /> Novo Recebimento</h3>
+              <button onClick={() => setIsQuickAddModalOpen(false)} className="text-emerald-100 hover:text-white"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleQuickAddIncome} className="p-6 space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Qual foi o valor recebido?</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-gray-400">R$</span>
+                  <input type="number" required min="0.01" step="0.01" value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} placeholder="0,00" autoFocus className="w-full pl-14 pr-4 py-4 border-2 border-emerald-200 dark:border-gray-600 rounded-2xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-emerald-500 focus:ring-0 outline-none text-3xl font-bold text-center" />
+                </div>
+              </div>
+              
+              <div>
+                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Para a conta de quem?</label>
+                 <div className="grid grid-cols-3 gap-2">
+                    <button type="button" onClick={() => setQuickPayer('Renan')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Renan' ? 'bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Renan</button>
+                    <button type="button" onClick={() => setQuickPayer('Esposa')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Esposa' ? 'bg-pink-50 border-pink-500 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Esposa</button>
+                    <button type="button" onClick={() => setQuickPayer('Conjunto')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Conjunto' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Conjunta</button>
+                 </div>
+              </div>
+              <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-2xl transition-transform hover:scale-[1.02] shadow-lg text-lg flex items-center justify-center gap-2">
+                <CheckCircle2 size={24} /> Guardar Receita
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* NOVA MODAL: CONFIGURAR CHAVE DA IA */}
       {isApiKeyModalOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
@@ -1439,49 +1479,6 @@ export default function App() {
                   </div>
               </div>
               <button type="submit" className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl transition-colors">Adicionar Conta</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL DE ADICIONAR NOVA META */}
-      {isGoalModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-indigo-50 dark:bg-indigo-900/20">
-              <h3 className="text-lg font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-2"><Target size={22} /> Criar Caixinha</h3>
-              <button onClick={() => setIsGoalModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
-            </div>
-            <form onSubmit={handleAddGoal} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Para que está a poupar?</label>
-                <input type="text" required value={goalName} onChange={(e) => setGoalName(e.target.value)} placeholder="Ex: Férias, Fundo de Emergência" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Qual o valor objetivo? (R$)</label>
-                <input type="number" required min="1" step="0.01" value={goalTarget} onChange={(e) => setGoalTarget(e.target.value)} placeholder="Ex: 5000,00" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
-              </div>
-              <button type="submit" className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl transition-colors">Criar Meta</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL DE DEPOSITAR DINHEIRO NA META */}
-      {isAddFundsModalOpen && selectedGoal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-emerald-50 dark:bg-emerald-900/20">
-              <h3 className="text-lg font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-2"><PiggyBank size={22} /> Guardar Dinheiro</h3>
-              <button onClick={() => { setIsAddFundsModalOpen(false); setFundsAmount(''); }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
-            </div>
-            <form onSubmit={handleAddFunds} className="p-6 space-y-4">
-              <p className="text-sm text-gray-600 dark:text-gray-300 text-center mb-4">Adicionar saldo à caixinha <strong className="text-gray-800 dark:text-gray-100">{selectedGoal.name}</strong></p>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Valor a depositar (R$)</label>
-                <input type="number" required min="0.01" step="0.01" value={fundsAmount} onChange={(e) => setFundsAmount(e.target.value)} placeholder="0,00" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none text-center text-lg font-bold" />
-              </div>
-              <button type="submit" className="w-full mt-4 bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 rounded-xl transition-colors">Confirmar Depósito</button>
             </form>
           </div>
         </div>
