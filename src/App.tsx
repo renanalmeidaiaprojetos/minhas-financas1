@@ -6,7 +6,7 @@ import {
   X, PieChart, ChevronLeft, ChevronRight, CalendarDays, BarChart3,
   Gamepad2, HeartPulse, GraduationCap, PiggyBank, Plane, Cat,
   Moon, Sun, Download, Search, CheckCircle2, Circle, Repeat, Target,
-  ArrowUpRight, ArrowDownRight, Minus, Receipt, UploadCloud, Loader2,
+  ArrowUpRight, ArrowDownRight, Minus, UploadCloud, Loader2,
   Bell, CreditCard, Sparkles, RefreshCw, Banknote, Landmark, AlertTriangle, Bot,
   Database, Check, User, Users, Building, Edit2, Pin, TrendingUp as TrendUpIcon
 } from 'lucide-react';
@@ -88,7 +88,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isCloudLoading, setIsCloudLoading] = useState(true);
 
-  // Cofre local seguro para a sua chave da IA (nunca mais vai para o GitHub)
+  // Cofre local seguro para a sua chave da IA
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('financas_gemini_key') || '');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
@@ -176,7 +176,7 @@ export default function App() {
         localStorage.setItem('financas_app_accounts', JSON.stringify(accounts));
     }
     localStorage.setItem('financas_app_theme', darkMode ? 'dark' : 'light');
-    localStorage.setItem('financas_gemini_key', geminiApiKey); // Guarda a chave de forma segura no telemóvel
+    localStorage.setItem('financas_gemini_key', geminiApiKey);
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   }, [darkMode, transactions, budgets, goals, accounts, geminiApiKey]);
@@ -578,14 +578,6 @@ export default function App() {
       setDeleteConfig(null);
   };
 
-  const exportCSV = () => {
-    const headers = "Data,Descrição,Categoria,Tipo,Valor,Conta,Pagador,Status\n";
-    const rows = transactions.map(t => `${t.date},${t.description},${t.category},${t.type === 'income' ? 'Receita' : 'Despesa'},${t.amount},${t.wallet || 'N/A'},${t.payer || 'Conjunto'},${t.status === 'paid' ? 'Pago' : 'Pendente'}`).join("\n");
-    const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `financas_${new Date().toISOString().split('T')[0]}.csv`; a.click();
-  };
-
   const updateBudget = async (cat) => {
     const newBudget = prompt(`Defina o limite mensal para ${cat} (R$):`, budgets[cat] || 0);
     if (newBudget !== null && !isNaN(newBudget)) {
@@ -636,7 +628,7 @@ export default function App() {
           throw new Error("A chave de API não está configurada! Por favor, insira a sua chave nas definições.");
       }
       
-      const model = 'gemini-1.5-flash'; // CORRIGIDO: Versão pública e estável
+      const model = 'gemini-1.5-flash';
       try {
           const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -727,7 +719,6 @@ export default function App() {
                 )}
               </div>
               
-              {/* BOTÃO DE CONFIGURAÇÃO DA IA (NOVO) */}
               <button onClick={() => { setTempApiKey(geminiApiKey); setIsApiKeyModalOpen(true); }} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Configurar Inteligência Artificial">
                 <Sparkles size={20} className={geminiApiKey ? "text-yellow-300" : "text-gray-300"} />
               </button>
@@ -1399,39 +1390,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DO BOTÃO FLUTUANTE DE VENDA RÁPIDA (NOVO) */}
-      {isQuickAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-emerald-500 text-white">
-              <h3 className="text-xl font-bold flex items-center gap-2"><DollarSign size={24} /> Novo Recebimento</h3>
-              <button onClick={() => setIsQuickAddModalOpen(false)} className="text-emerald-100 hover:text-white"><X size={24} /></button>
-            </div>
-            <form onSubmit={handleQuickAddIncome} className="p-6 space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Qual foi o valor recebido?</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-gray-400">R$</span>
-                  <input type="number" required min="0.01" step="0.01" value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} placeholder="0,00" autoFocus className="w-full pl-14 pr-4 py-4 border-2 border-emerald-200 dark:border-gray-600 rounded-2xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-emerald-500 focus:ring-0 outline-none text-3xl font-bold text-center" />
-                </div>
-              </div>
-              
-              <div>
-                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Para a conta de quem?</label>
-                 <div className="grid grid-cols-3 gap-2">
-                    <button type="button" onClick={() => setQuickPayer('Renan')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Renan' ? 'bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Renan</button>
-                    <button type="button" onClick={() => setQuickPayer('Esposa')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Esposa' ? 'bg-pink-50 border-pink-500 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Esposa</button>
-                    <button type="button" onClick={() => setQuickPayer('Conjunto')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Conjunto' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Conjunta</button>
-                 </div>
-              </div>
-              <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-2xl transition-transform hover:scale-[1.02] shadow-lg text-lg flex items-center justify-center gap-2">
-                <CheckCircle2 size={24} /> Guardar Receita
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* NOVA MODAL: CONFIGURAR CHAVE DA IA */}
       {isApiKeyModalOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
@@ -1441,7 +1399,7 @@ export default function App() {
             </div>
             <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">Configurar IA</h3>
             <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm">
-              Para usar o Leitor de Comprovantes e Dicas Inteligentes, cole a sua chave do <strong>Google AI Studio</strong> abaixo.<br/><br/>
+              Para usar as Dicas Inteligentes, cole a sua chave do <strong>Google AI Studio</strong> abaixo.<br/><br/>
               <span className="text-purple-600 dark:text-purple-400 font-medium">Ela ficará guardada apenas no seu navegador por segurança!</span>
             </p>
             <input type="text" value={tempApiKey} onChange={(e) => setTempApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 outline-none mb-4 font-mono text-sm" />
@@ -1486,7 +1444,50 @@ export default function App() {
         </div>
       )}
 
-      {/* OUTRAS MODAIS: APAGAR E COMPROVANTE (IA) */}
+      {/* MODAL DE ADICIONAR NOVA META */}
+      {isGoalModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-indigo-50 dark:bg-indigo-900/20">
+              <h3 className="text-lg font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-2"><Target size={22} /> Criar Caixinha</h3>
+              <button onClick={() => setIsGoalModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddGoal} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Para que está a poupar?</label>
+                <input type="text" required value={goalName} onChange={(e) => setGoalName(e.target.value)} placeholder="Ex: Férias, Fundo de Emergência" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Qual o valor objetivo? (R$)</label>
+                <input type="number" required min="1" step="0.01" value={goalTarget} onChange={(e) => setGoalTarget(e.target.value)} placeholder="Ex: 5000,00" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+              <button type="submit" className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl transition-colors">Criar Meta</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE DEPOSITAR DINHEIRO NA META */}
+      {isAddFundsModalOpen && selectedGoal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-emerald-50 dark:bg-emerald-900/20">
+              <h3 className="text-lg font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-2"><PiggyBank size={22} /> Guardar Dinheiro</h3>
+              <button onClick={() => { setIsAddFundsModalOpen(false); setFundsAmount(''); }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddFunds} className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 dark:text-gray-300 text-center mb-4">Adicionar saldo à caixinha <strong className="text-gray-800 dark:text-gray-100">{selectedGoal.name}</strong></p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Valor a depositar (R$)</label>
+                <input type="number" required min="0.01" step="0.01" value={fundsAmount} onChange={(e) => setFundsAmount(e.target.value)} placeholder="0,00" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none text-center text-lg font-bold" />
+              </div>
+              <button type="submit" className="w-full mt-4 bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 rounded-xl transition-colors">Confirmar Depósito</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* OUTRAS MODAIS: APAGAR, PLANILHA */}
       {deleteConfig && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm p-6 text-center animate-in fade-in zoom-in-95 duration-200">
