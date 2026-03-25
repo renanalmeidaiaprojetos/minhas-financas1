@@ -7,8 +7,8 @@ import {
   Gamepad2, HeartPulse, GraduationCap, PiggyBank, Plane, Cat,
   Moon, Sun, Download, Search, CheckCircle2, Circle, Repeat, Target,
   ArrowUpRight, ArrowDownRight, Minus, Loader2,
-  Bell, CreditCard, Sparkles, RefreshCw, Banknote, Landmark, AlertTriangle, Bot,
-  Database, Check, User, Users, Building, Edit2, Pin, TrendingUp as TrendUpIcon
+  Bell, CreditCard, RefreshCw, Banknote, Landmark, AlertTriangle, Bot,
+  Database, Check, User, Users, Building, Edit2, Pin, TrendingUp as TrendUpIcon, Receipt, UploadCloud, Sparkles
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
@@ -87,7 +87,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isCloudLoading, setIsCloudLoading] = useState(true);
 
-  // Cofre local seguro para a sua chave da IA
+  // Cofre local seguro para a chave da IA
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('financas_gemini_key') || '');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
@@ -191,6 +191,11 @@ export default function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [advisorAdvice, setAdvisorAdvice] = useState('');
   const [isAdvisorLoading, setIsAdvisorLoading] = useState(false);
+
+  // Estados dos Comprovantes/PIX IA
+  const [isReceiptImportOpen, setIsReceiptImportOpen] = useState(false);
+  const [isReceiptImporting, setIsReceiptImporting] = useState(false);
+  const [receiptImportMessage, setReceiptImportMessage] = useState({ type: '', text: '' });
 
   // Estados da Modal de Venda/Recebimento Rápido
   const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false);
@@ -321,10 +326,17 @@ export default function App() {
   }, [transactions, accounts]);
 
   const formatCurrency = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+  
   const formatDate = (dateString) => new Date(`${dateString}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
+  
   const formatPeriodLabel = () => {
     if (viewMode === 'annual') return currentDate.getFullYear().toString();
     const label = currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }); return label.charAt(0).toUpperCase() + label.slice(1);
+  };
+
+  const formatComparePeriodLabel = () => {
+    if (viewMode === 'annual') return compareDate.getFullYear().toString();
+    const label = compareDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }); return label.charAt(0).toUpperCase() + label.slice(1);
   };
 
   const changePeriod = (direction) => {
@@ -334,7 +346,7 @@ export default function App() {
       else newDate.setMonth(prev.getMonth() + direction);
       return newDate;
     });
-    setAdvisorAdvice(''); setSelectedCalendarDay(null);
+    setSelectedCalendarDay(null);
   };
 
   const WalletIcon = ({ walletName, size = 14, className = "" }) => {
@@ -349,6 +361,199 @@ export default function App() {
     if (payer === 'Renan') return <User size={size} className={`text-blue-500 ${className}`} title="Recebido/Pago por Renan" />;
     if (payer === 'Esposa') return <User size={size} className={`text-pink-500 ${className}`} title="Recebido/Pago por Esposa" />;
     return <Users size={size} className={`text-indigo-500 ${className}`} title="Conjunto" />;
+  };
+
+  // --- NOVA FUNÇÃO DA IA: SIMPLES E GARANTIDA (UNIVERSAL) ---
+  const callGeminiAPI = async (promptText, mimeType = null, base64Data = null, fallbackLevel = 0) => {
+      if (!geminiApiKey) {
+          setIsApiKeyModalOpen(true);
+          throw new Error("A chave de API não está configurada. Por favor, insira-a na Estrelinha 🌟 no topo.");
+      }
+      
+      // Lista de modelos garantidos da API pública
+      const models = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash-latest'];
+      
+      if (fallbackLevel >= models.length) {
+          throw new Error("A sua chave foi aceite, mas a Google bloqueou estes modelos. Tente gerar uma nova chave no AI Studio.");
+      }
+      
+      const model = models[fallbackLevel];
+      
+      // Construção da mensagem limpa (sem systemInstructions que causam erro nas chaves beta)
+      const parts = [{ text: promptText }];
+      if (mimeType && base64Data) {
+          parts.push({ inlineData: { mimeType, data: base64Data } });
+      }
+
+      const payload = {
+          contents: [{ role: "user", parts: parts }]
+      };
+      
+      try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+          });
+          
+          if (!res.ok) { 
+              const errData = await res.json(); 
+              const errMsg = errData.error?.message || "";
+              
+              if (errMsg.includes("not found") || errMsg.includes("not supported")) {
+                  console.warn(`Modelo ${model} não funcionou. Tentando o próximo...`);
+                  return await callGeminiAPI(promptText, mimeType, base64Data, fallbackLevel + 1);
+              }
+              
+              throw new Error(errMsg || "Erro na comunicação com a Google."); 
+          }
+          return await res.json();
+      } catch (e) { 
+          throw e; 
+      }
+  };
+
+  // Pedir Conselho à IA (Gráficos)
+  const handleGetAdvisorAdvice = async () => {
+      if (!geminiApiKey) {
+          setIsApiKeyModalOpen(true);
+          return;
+      }
+      setIsAdvisorLoading(true);
+      try {
+          const topCategories = categoryStats.slice(0,3).map(c => `${c.category} (${formatCurrency(c.amount)})`).join(', ');
+          const promptText = `Você é um Conselheiro Financeiro amigável e super inteligente. Analise o resumo do mês deste usuário. O foco deve ser dar 1 dica ou insight construtivo, rápido e motivador (máximo 3 frases curtas). Seja direto, como se fosse um SMS.\n\nResumo do Mês:\nReceitas Previstas: ${summary.expectedIncome}\nDespesas Previstas: ${summary.expectedExpense}\nSaldo Previsto: ${summary.expectedBalance}\nMaiores Gastos: ${topCategories || 'Nenhum ainda'}`;
+          
+          const responseData = await callGeminiAPI(promptText);
+          setAdvisorAdvice(responseData.candidates[0].content.parts[0].text);
+      } catch(e) { 
+          setAdvisorAdvice(`Ops! Falhou: ${e.message}`); 
+      } finally { 
+          setIsAdvisorLoading(false); 
+      }
+  };
+
+  // Leitor de Comprovantes / PIX (IA)
+  const handleReceiptImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (!geminiApiKey) {
+        setIsReceiptImportOpen(false);
+        setIsApiKeyModalOpen(true);
+        e.target.value = '';
+        return;
+    }
+    
+    setIsReceiptImporting(true); 
+    setReceiptImportMessage({ type: '', text: '' });
+    
+    try {
+        let mimeType = file.type; 
+        let base64Data = "";
+        
+        if (file.type.startsWith('image/')) {
+            base64Data = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        let width = img.width; let height = img.height; const maxSize = 1200; 
+                        if (width > height && width > maxSize) { height *= maxSize / width; width = maxSize; } 
+                        else if (height > maxSize) { width *= maxSize / height; height = maxSize; }
+                        canvas.width = width; canvas.height = height;
+                        const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.7).split(',')[1]); 
+                    };
+                    img.onerror = () => reject(new Error("Falha ao processar a imagem."));
+                    img.src = reader.result;
+                };
+                reader.onerror = () => reject(new Error("Falha ao ler o ficheiro."));
+                reader.readAsDataURL(file);
+            });
+            mimeType = 'image/jpeg';
+        } else {
+            base64Data = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = () => reject(new Error("Falha ao ler o ficheiro PDF."));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        const accountNames = accounts.map(a => a.name).join(', ');
+
+        const promptText = `Você é um assistente financeiro inteligente. Analise a imagem anexada (pode ser um comprovante de PIX, transferência ou extrato).
+        Retorne APENAS E EXCLUSIVAMENTE um ARRAY de objetos JSON. Cada objeto deve representar UM recebimento e ter exatamente estas chaves:
+        "description" (Nome curto de quem enviou o dinheiro, ex: João Silva),
+        "amount" (Valor exato em formato número, ex: 150.50),
+        "type" (Sempre retorne "income"),
+        "category" (Sempre retorne "Trabalho"),
+        "date" (Data no formato "YYYY-MM-DD". Se não tiver, use a data de hoje),
+        "wallet" (Tente deduzir para qual conta o dinheiro foi enviado baseando-se nestas opções: [${accountNames}]. Se não conseguir deduzir, retorne a primeira opção da lista ou "Conta Corrente"),
+        "payer" (Quem recebeu: "Renan", "Esposa" ou "Conjunto")
+        
+        AVISO IMPORTANTE: Retorne APENAS o JSON. Não adicione a palavra json, não adicione crases (\`\`\`), não adicione nenhuma explicação. O seu texto deve começar com [ e terminar com ].`;
+
+        const responseData = await callGeminiAPI(promptText, mimeType, base64Data);
+        
+        let rawText = responseData.candidates[0].content.parts[0].text;
+        
+        // Limpar possíveis erros de formatação da IA (se ela teimar em usar markdown)
+        rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        
+        // Assegurar que começa e termina com os parêntesis de Array
+        if(!rawText.startsWith('[')) rawText = `[${rawText}`;
+        if(!rawText.endsWith(']')) rawText = `${rawText}]`;
+        
+        let extractedArray = JSON.parse(rawText);
+        if (!Array.isArray(extractedArray)) extractedArray = [extractedArray];
+
+        let newRecordsCount = 0;
+        let offlineTransactions = [...transactions];
+
+        for (const extracted of extractedArray) {
+            // Verifica se já não existe uma transação idêntica para evitar duplicações
+            const isDuplicate = offlineTransactions.some(t => t.description === extracted.description && t.amount === extracted.amount && t.date === extracted.date && t.type === 'income');
+            
+            if (!isDuplicate) {
+                const newTx = {
+                    id: crypto.randomUUID(), 
+                    description: extracted.description || 'PIX Recebido', 
+                    amount: parseFloat(extracted.amount) || 0, 
+                    type: 'income',
+                    category: extracted.category || 'Trabalho', 
+                    date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : new Date().toISOString().split('T')[0],
+                    status: 'paid', 
+                    wallet: extracted.wallet || (accounts.length > 0 ? accounts[0].name : 'Conta Corrente'), 
+                    payer: extracted.payer || 'Conjunto', 
+                    expenseCategory: '', 
+                    isSubscription: false
+                };
+
+                if (db && user) {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', newTx.id), newTx);
+                }
+                offlineTransactions.push(newTx);
+                newRecordsCount++;
+            }
+        }
+        
+        if (!db || !user) {
+            setTransactions(offlineTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)));
+        }
+
+        if (newRecordsCount > 0) {
+            setReceiptImportMessage({ type: 'success', text: `${newRecordsCount} PIX registado(s) e adicionado(s) às contas ✅` });
+            setTimeout(() => setIsReceiptImportOpen(false), 4500);
+        } else {
+            setReceiptImportMessage({ type: 'error', text: `Nenhum PIX novo encontrado (ou já estava registado).` });
+        }
+    } catch (err) { 
+        setReceiptImportMessage({ type: 'error', text: `Erro: ${err.message}` }); 
+    } finally { 
+        setIsReceiptImporting(false); 
+        if(e.target) e.target.value = ''; 
+    }
   };
 
   // Funções de Gestão de Contas
@@ -629,47 +834,6 @@ export default function App() {
       } catch (error) { console.error(error); setImportStatus('idle'); }
   };
 
-  const callGeminiAPI = async (payload) => {
-      if (!geminiApiKey) {
-          setIsApiKeyModalOpen(true);
-          throw new Error("A chave de API não está configurada! Por favor, insira a sua chave nas definições.");
-      }
-      
-      const model = 'gemini-1.5-flash';
-      try {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-          });
-          if (!res.ok) { const errData = await res.json(); throw new Error(errData.error?.message || "Erro na API do Google."); }
-          return await res.json();
-      } catch (e) { throw e; }
-  };
-
-  const handleGetAdvisorAdvice = async () => {
-      if (!geminiApiKey) {
-          setIsApiKeyModalOpen(true);
-          return;
-      }
-      
-      setIsAdvisorLoading(true);
-      try {
-          const topCategories = categoryStats.slice(0,3).map(c => `${c.category} (${formatCurrency(c.amount)})`).join(', ');
-          const systemInstruction = `Você é um Conselheiro Financeiro amigável e super inteligente.
-          Analise o resumo do mês deste usuário. O foco deve ser dar 1 dica ou insight construtivo, rápido e motivador (máximo 3 frases curtas).
-          Seja direto, como se fosse um SMS.`;
-          
-          const payload = {
-            contents: [{ role: "user", parts: [
-              { text: `Resumo do Mês:\nReceitas Previstas: ${summary.expectedIncome}\nDespesas Previstas: ${summary.expectedExpense}\nSaldo Previsto: ${summary.expectedBalance}\nMaiores Gastos: ${topCategories || 'Nenhum ainda'}` }
-            ]}],
-            systemInstruction: { parts: [{ text: systemInstruction }] }
-          };
-
-          const responseData = await callGeminiAPI(payload);
-          setAdvisorAdvice(responseData.candidates[0].content.parts[0].text);
-      } catch(e) { setAdvisorAdvice(`Ops! Falhou: ${e.message}`); } finally { setIsAdvisorLoading(false); }
-  };
-
   const todayStr = new Date().toISOString().split('T')[0];
   const paidTransactions = filteredTransactions.filter(t => t.status === 'paid');
   const pendingTransactions = filteredTransactions.filter(t => t.status === 'pending');
@@ -726,7 +890,7 @@ export default function App() {
                 )}
               </div>
               
-              <button onClick={() => { setTempApiKey(geminiApiKey); setIsApiKeyModalOpen(true); }} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Configurar Inteligência Artificial">
+              <button onClick={() => { setTempApiKey(geminiApiKey); setIsApiKeyModalOpen(true); }} className="p-2 rounded-full hover:bg-white/10 transition-colors" title="Configurar IA (Chave Google)">
                 <Sparkles size={20} className={geminiApiKey ? "text-yellow-300" : "text-gray-300"} />
               </button>
               
@@ -735,6 +899,11 @@ export default function App() {
               <button onClick={() => setIsPlanilhaModalOpen(true)} className="bg-indigo-700 hover:bg-indigo-800 dark:bg-indigo-950 dark:hover:bg-indigo-900 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm text-white" title="Importar Planilha Antiga">
                 <Database size={20} /> <span className="hidden xl:inline">Planilha</span>
               </button>
+
+              <button onClick={() => { setReceiptImportMessage({type: '', text: ''}); setIsReceiptImportOpen(true); }} className="bg-teal-500 hover:bg-teal-400 dark:bg-teal-700 dark:hover:bg-teal-600 px-3 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm text-white" title="Ler Comprovante de PIX (IA)">
+                <Receipt size={20} /> <span className="hidden lg:inline">Ler PIX</span>
+              </button>
+
               <button onClick={() => { resetForm(); setIsModalOpen(true); }} className="bg-indigo-500 hover:bg-indigo-400 dark:bg-indigo-700 dark:hover:bg-indigo-600 px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm">
                 <Plus size={20} /> <span className="hidden sm:inline">Nova Despesa</span>
               </button>
@@ -1397,39 +1566,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DO BOTÃO FLUTUANTE DE VENDA RÁPIDA (NOVO) */}
-      {isQuickAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-emerald-500 text-white">
-              <h3 className="text-xl font-bold flex items-center gap-2"><DollarSign size={24} /> Novo Recebimento</h3>
-              <button onClick={() => setIsQuickAddModalOpen(false)} className="text-emerald-100 hover:text-white"><X size={24} /></button>
-            </div>
-            <form onSubmit={handleQuickAddIncome} className="p-6 space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Qual foi o valor recebido?</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-gray-400">R$</span>
-                  <input type="number" required min="0.01" step="0.01" value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} placeholder="0,00" autoFocus className="w-full pl-14 pr-4 py-4 border-2 border-emerald-200 dark:border-gray-600 rounded-2xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-emerald-500 focus:ring-0 outline-none text-3xl font-bold text-center" />
-                </div>
-              </div>
-              
-              <div>
-                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Para a conta de quem?</label>
-                 <div className="grid grid-cols-3 gap-2">
-                    <button type="button" onClick={() => setQuickPayer('Renan')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Renan' ? 'bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Renan</button>
-                    <button type="button" onClick={() => setQuickPayer('Esposa')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Esposa' ? 'bg-pink-50 border-pink-500 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Esposa</button>
-                    <button type="button" onClick={() => setQuickPayer('Conjunto')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Conjunto' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Conjunta</button>
-                 </div>
-              </div>
-              <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-2xl transition-transform hover:scale-[1.02] shadow-lg text-lg flex items-center justify-center gap-2">
-                <CheckCircle2 size={24} /> Guardar Receita
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* NOVA MODAL: CONFIGURAR CHAVE DA IA */}
       {isApiKeyModalOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
@@ -1439,8 +1575,8 @@ export default function App() {
             </div>
             <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">Configurar IA</h3>
             <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm">
-              Para usar as Dicas Inteligentes, cole a sua chave do <strong>Google AI Studio</strong> abaixo.<br/><br/>
-              <span className="text-purple-600 dark:text-purple-400 font-medium">Ela ficará guardada apenas no seu navegador por segurança!</span>
+              Para usar o leitor de PIX Inteligente, cole a sua chave do <strong>Google AI Studio</strong> abaixo.<br/><br/>
+              <span className="text-purple-600 dark:text-purple-400 font-medium">Ela ficará guardada apenas no seu telemóvel por segurança!</span>
             </p>
             <input type="text" value={tempApiKey} onChange={(e) => setTempApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-purple-500 outline-none mb-4 font-mono text-sm" />
             <div className="flex gap-3">
@@ -1479,6 +1615,49 @@ export default function App() {
                   </div>
               </div>
               <button type="submit" className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl transition-colors">Adicionar Conta</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE ADICIONAR NOVA META */}
+      {isGoalModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-indigo-50 dark:bg-indigo-900/20">
+              <h3 className="text-lg font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-2"><Target size={22} /> Criar Caixinha</h3>
+              <button onClick={() => setIsGoalModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddGoal} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Para que está a poupar?</label>
+                <input type="text" required value={goalName} onChange={(e) => setGoalName(e.target.value)} placeholder="Ex: Férias, Fundo de Emergência" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Qual o valor objetivo? (R$)</label>
+                <input type="number" required min="1" step="0.01" value={goalTarget} onChange={(e) => setGoalTarget(e.target.value)} placeholder="Ex: 5000,00" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none" />
+              </div>
+              <button type="submit" className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-xl transition-colors">Criar Meta</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE DEPOSITAR DINHEIRO NA META */}
+      {isAddFundsModalOpen && selectedGoal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-emerald-50 dark:bg-emerald-900/20">
+              <h3 className="text-lg font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-2"><PiggyBank size={22} /> Guardar Dinheiro</h3>
+              <button onClick={() => { setIsAddFundsModalOpen(false); setFundsAmount(''); }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleAddFunds} className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 dark:text-gray-300 text-center mb-4">Adicionar saldo à caixinha <strong className="text-gray-800 dark:text-gray-100">{selectedGoal.name}</strong></p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Valor a depositar (R$)</label>
+                <input type="number" required min="0.01" step="0.01" value={fundsAmount} onChange={(e) => setFundsAmount(e.target.value)} placeholder="0,00" className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none text-center text-lg font-bold" />
+              </div>
+              <button type="submit" className="w-full mt-4 bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 rounded-xl transition-colors">Confirmar Depósito</button>
             </form>
           </div>
         </div>
@@ -1543,7 +1722,7 @@ export default function App() {
                  <>
                     <div className="w-20 h-20 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-4"><Database size={40} /></div>
                     <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">Importar Planilha</h3>
-                    <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm">A Inteligência Artificial leu a sua imagem e extraiu <strong>118 lançamentos</strong> (de Janeiro a Dezembro de 2026).<br/><br/>Deseja guardar tudo na sua nuvem agora?</p>
+                    <p className="text-gray-600 dark:text-gray-300 mb-6 text-sm">Esta ação irá simular a importação de <strong>118 lançamentos</strong> (de Janeiro a Dezembro de 2026).<br/><br/>Deseja guardar tudo na sua nuvem agora?</p>
                     <div className="flex gap-3">
                         <button onClick={() => setIsPlanilhaModalOpen(false)} disabled={importStatus === 'importing'} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 text-gray-700 rounded-xl font-medium transition-colors disabled:opacity-50">Cancelar</button>
                         <button onClick={handleImportPlanilha} disabled={importStatus === 'importing'} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50">
@@ -1552,6 +1731,48 @@ export default function App() {
                     </div>
                  </>
              )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DO LEITOR DE PIX / IA */}
+      {isReceiptImportOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-teal-500 text-white">
+              <h3 className="text-xl font-bold flex items-center gap-2"><Receipt size={24} /> Leitor de PIX Inteligente</h3>
+              <button onClick={() => !isReceiptImporting && setIsReceiptImportOpen(false)} className="text-teal-100 hover:text-white" disabled={isReceiptImporting}><X size={24} /></button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 text-center">Envie o <strong className="text-teal-600 dark:text-teal-400">Comprovante de PIX</strong> (print ou PDF). A IA vai identificar quem pagou, o valor e para qual banco foi.</p>
+              
+              {receiptImportMessage.text && (
+                  <div className={`mb-4 p-4 text-sm rounded-xl border font-medium text-center ${receiptImportMessage.type === 'error' ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-600 border-rose-200 dark:border-rose-800' : 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 border-emerald-200 dark:border-emerald-800'}`}>
+                      {receiptImportMessage.text}
+                  </div>
+              )}
+              
+              <div className="relative">
+                <input type="file" accept="image/*,application/pdf" onChange={handleReceiptImport} disabled={isReceiptImporting || receiptImportMessage.type === 'success'} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed z-10" />
+                <div className={`flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-8 transition-all duration-200 ${isReceiptImporting ? 'border-teal-300 bg-teal-50 dark:border-teal-700 dark:bg-teal-900/20 scale-95' : 'border-gray-300 hover:border-teal-500 hover:bg-teal-50 dark:border-gray-600 dark:hover:border-teal-500 dark:hover:bg-gray-700/50'}`}>
+                  {isReceiptImporting ? (
+                      <>
+                          <Loader2 size={48} className="text-teal-500 animate-spin mb-4" />
+                          <p className="text-teal-700 dark:text-teal-400 font-bold text-center text-lg">A ler o PIX...</p>
+                          <p className="text-teal-600/70 dark:text-teal-400/70 text-sm text-center mt-1">A identificar banco e valor</p>
+                      </>
+                  ) : (
+                      <>
+                          <div className="w-16 h-16 bg-teal-100 dark:bg-teal-900/40 rounded-full flex items-center justify-center mb-4">
+                              <UploadCloud size={32} className="text-teal-600 dark:text-teal-400" />
+                          </div>
+                          <p className="text-gray-800 dark:text-gray-200 font-bold text-center text-lg">Toque para enviar Print</p>
+                          <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Imagens ou PDF</p>
+                      </>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
