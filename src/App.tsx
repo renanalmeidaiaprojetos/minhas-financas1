@@ -24,7 +24,8 @@ const CONTAS_INICIAIS = [
   { id: '2', name: 'Nubank Esposa', type: 'Conta', initialBalance: 0 },
   { id: '3', name: 'Conta Corrente', type: 'Conta', initialBalance: 0 },
   { id: '4', name: 'Cartão de Crédito', type: 'Cartão', initialBalance: 0 },
-  { id: '5', name: 'Dinheiro Físico', type: 'Dinheiro', initialBalance: 0 }
+  { id: '5', name: 'Dinheiro Físico', type: 'Dinheiro', initialBalance: 0 },
+  { id: '6', name: 'Santander', type: 'Conta', initialBalance: 0 }
 ];
 
 const CATEGORIAS = {
@@ -79,12 +80,26 @@ const db = getFirestore(app);
 const appId = "cofre-da-familia"; 
 
 export default function App() {
-  const [transactions, setTransactions] = useState([]);
-  const [budgets, setBudgets] = useState(ORCAMENTOS_PADRAO);
-  const [goals, setGoals] = useState([]); 
-  const [accounts, setAccounts] = useState(CONTAS_INICIAIS);
+  // CARREGAMENTO SEGURO DA CACHE LOCAL (Restaura instantaneamente os seus dados antigos)
+  const [transactions, setTransactions] = useState(() => {
+    const saved = localStorage.getItem('financas_app_data');
+    return saved ? JSON.parse(saved) : DADOS_INICIAIS;
+  });
+  const [budgets, setBudgets] = useState(() => {
+    const saved = localStorage.getItem('financas_app_budgets');
+    return saved ? JSON.parse(saved) : ORCAMENTOS_PADRAO;
+  });
+  const [goals, setGoals] = useState(() => {
+    const saved = localStorage.getItem('financas_app_goals');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [accounts, setAccounts] = useState(() => {
+    const saved = localStorage.getItem('financas_app_accounts');
+    return saved ? JSON.parse(saved) : CONTAS_INICIAIS;
+  });
+  
   const [user, setUser] = useState(null);
-  const [isCloudLoading, setIsCloudLoading] = useState(true);
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
 
   // Configurações do ecrã para forçar comportamento de App e evitar zoom
   useEffect(() => {
@@ -95,8 +110,13 @@ export default function App() {
       document.head.appendChild(meta);
     }
     meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0';
+    
+    // Trava absoluta contra scroll horizontal indesejado e overscroll no mobile
     document.body.style.overflowX = 'hidden';
-    document.body.style.overscrollBehaviorY = 'none'; // Previne o pull-to-refresh em alguns telemóveis
+    document.body.style.width = '100%';
+    document.body.style.position = 'relative';
+    document.documentElement.style.overflowX = 'hidden';
+    document.body.style.overscrollBehaviorY = 'none'; 
   }, []);
 
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('financas_gemini_key') || '');
@@ -107,21 +127,8 @@ export default function App() {
     return localStorage.getItem('financas_app_theme') === 'dark';
   });
 
+  // Ligar à Nuvem
   useEffect(() => {
-    if (!auth) {
-        setIsCloudLoading(false);
-        const savedTx = localStorage.getItem('financas_app_data');
-        const savedBg = localStorage.getItem('financas_app_budgets');
-        const savedGoals = localStorage.getItem('financas_app_goals');
-        const savedAccounts = localStorage.getItem('financas_app_accounts');
-        if (savedTx) setTransactions(JSON.parse(savedTx));
-        else setTransactions(DADOS_INICIAIS);
-        if (savedBg) setBudgets(JSON.parse(savedBg));
-        if (savedGoals) setGoals(JSON.parse(savedGoals));
-        if (savedAccounts) setAccounts(JSON.parse(savedAccounts));
-        return;
-    }
-    
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -136,59 +143,71 @@ export default function App() {
       } catch(e) { console.error("Erro auth:", e); }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+        setUser(u);
+    });
     return () => unsubscribe();
   }, []);
 
+  // Escutar a Nuvem
   useEffect(() => {
     if (!user || !db) return;
     setIsCloudLoading(true);
 
     const txRef = collection(db, 'artifacts', appId, 'public', 'data', 'transactions');
     const unsubTx = onSnapshot(txRef, (snapshot) => {
-       const loadedTxs = [];
-       snapshot.forEach(d => loadedTxs.push({ ...d.data(), id: d.id }));
-       setTransactions(loadedTxs.sort((a, b) => new Date(b.date) - new Date(a.date)));
+       if (!snapshot.empty) {
+           const loadedTxs = [];
+           snapshot.forEach(d => loadedTxs.push({ ...d.data(), id: d.id }));
+           setTransactions(loadedTxs.sort((a, b) => new Date(b.date) - new Date(a.date)));
+       }
        setIsCloudLoading(false);
     }, (err) => { console.error(err); setIsCloudLoading(false); });
 
     const bgRef = collection(db, 'artifacts', appId, 'public', 'data', 'budgets');
     const unsubBg = onSnapshot(bgRef, (snapshot) => {
-       let loadedBg = { ...ORCAMENTOS_PADRAO };
-       snapshot.forEach(d => { loadedBg[d.id] = d.data().amount; });
-       setBudgets(loadedBg);
+       if (!snapshot.empty) {
+           let loadedBg = { ...ORCAMENTOS_PADRAO };
+           snapshot.forEach(d => { loadedBg[d.id] = d.data().amount; });
+           setBudgets(loadedBg);
+       }
     }, (err) => console.error(err));
 
     const goalsRef = collection(db, 'artifacts', appId, 'public', 'data', 'goals');
     const unsubGoals = onSnapshot(goalsRef, (snapshot) => {
-       const loadedGoals = [];
-       snapshot.forEach(d => loadedGoals.push({ ...d.data(), id: d.id }));
-       setGoals(loadedGoals);
+       if (!snapshot.empty) {
+           const loadedGoals = [];
+           snapshot.forEach(d => loadedGoals.push({ ...d.data(), id: d.id }));
+           setGoals(loadedGoals);
+       }
     }, (err) => console.error(err));
 
     const accountsRef = collection(db, 'artifacts', appId, 'public', 'data', 'accounts');
     const unsubAccounts = onSnapshot(accountsRef, (snapshot) => {
-       const loadedAccounts = [];
-       snapshot.forEach(d => loadedAccounts.push({ ...d.data(), id: d.id }));
-       if (loadedAccounts.length > 0) setAccounts(loadedAccounts);
+       if (!snapshot.empty) {
+           const loadedAccounts = [];
+           snapshot.forEach(d => loadedAccounts.push({ ...d.data(), id: d.id }));
+           if (loadedAccounts.length > 0) setAccounts(loadedAccounts);
+       }
     }, (err) => console.error(err));
 
     return () => { unsubTx(); unsubBg(); unsubGoals(); unsubAccounts(); };
   }, [user]);
 
+  // Gravar sempre na Cache Local por segurança
   useEffect(() => { 
-    if (!db) {
-        localStorage.setItem('financas_app_data', JSON.stringify(transactions));
-        localStorage.setItem('financas_app_budgets', JSON.stringify(budgets));
-        localStorage.setItem('financas_app_goals', JSON.stringify(goals));
-        localStorage.setItem('financas_app_accounts', JSON.stringify(accounts));
-    }
+    localStorage.setItem('financas_app_data', JSON.stringify(transactions));
+    localStorage.setItem('financas_app_budgets', JSON.stringify(budgets));
+    localStorage.setItem('financas_app_goals', JSON.stringify(goals));
+    localStorage.setItem('financas_app_accounts', JSON.stringify(accounts));
     localStorage.setItem('financas_app_theme', darkMode ? 'dark' : 'light');
     localStorage.setItem('financas_gemini_key', geminiApiKey);
     if (darkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   }, [darkMode, transactions, budgets, goals, accounts, geminiApiKey]);
 
+  // Modais e Estados da Interface
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState('monthly'); 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -198,21 +217,25 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
+  // Estados dos Comprovantes/PIX IA
   const [isReceiptImportOpen, setIsReceiptImportOpen] = useState(false);
   const [isReceiptImporting, setIsReceiptImporting] = useState(false);
   const [receiptImportMessage, setReceiptImportMessage] = useState({ type: '', text: '' });
   const [advisorAdvice, setAdvisorAdvice] = useState('');
   const [isAdvisorLoading, setIsAdvisorLoading] = useState(false);
 
+  // Estados da Modal de Venda/Recebimento Rápido
   const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false);
   const [quickAmount, setQuickAmount] = useState('');
   const [quickPayer, setQuickPayer] = useState('Conjunto');
 
+  // Estados da Modal de Despesa Rápida
   const [isQuickExpenseModalOpen, setIsQuickExpenseModalOpen] = useState(false);
   const [quickExpenseAmount, setQuickExpenseAmount] = useState('');
   const [quickExpenseDesc, setQuickExpenseDesc] = useState('');
   const [quickExpenseWallet, setQuickExpenseWallet] = useState('');
 
+  // Estados do Formulário de Transação e Edição
   const [editingTxId, setEditingTxId] = useState(null);
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
@@ -226,16 +249,20 @@ export default function App() {
   const [recurrenceType, setRecurrenceType] = useState('none');
   const [installments, setInstallments] = useState(2);
 
+  // Estados para Pagamento de Pendentes
   const [payingTx, setPayingTx] = useState(null); 
   const [payWallet, setPayWallet] = useState(''); 
 
+  // Estados das Contas Bancárias e Ajuste
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState(null);
   const [newAccountName, setNewAccountName] = useState('');
   const [newAccountType, setNewAccountType] = useState('Conta');
   const [newAccountBalance, setNewAccountBalance] = useState('');
   const [adjustingAccount, setAdjustingAccount] = useState(null);
   const [adjustBalanceInput, setAdjustBalanceInput] = useState('');
 
+  // Outros estados
   const [deleteConfig, setDeleteConfig] = useState(null);
   const [isPlanilhaModalOpen, setIsPlanilhaModalOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('idle');
@@ -369,14 +396,12 @@ export default function App() {
     return <Users size={size} className={`text-indigo-500 ${className}`} title="Conjunto" />;
   };
 
-  // --- NOVA FUNÇÃO DA IA COM FALLBACK COMPLETO ---
   const callGeminiAPI = async (promptText, mimeType = null, base64Data = null, fallbackLevel = 0) => {
       if (!geminiApiKey) {
           setIsApiKeyModalOpen(true);
           throw new Error("A chave de API não está configurada. Por favor, insira-a na Estrelinha 🌟 no topo.");
       }
       
-      // Lista de modelos que a IA vai tentar. Vai do mais moderno e recomendado até aos mais antigos/estáveis
       const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash-latest'];
       
       if (fallbackLevel >= models.length) {
@@ -460,7 +485,7 @@ export default function App() {
                     const img = new Image();
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        let width = img.width; let height = img.height; const maxSize = 1000; 
+                        let width = img.width; let height = img.height; const maxSize = 1200; 
                         if (width > height && width > maxSize) { height *= maxSize / width; width = maxSize; } 
                         else if (height > maxSize) { width *= maxSize / height; height = maxSize; }
                         canvas.width = width; canvas.height = height;
@@ -485,17 +510,17 @@ export default function App() {
 
         const accountNames = accounts.map(a => a.name).join(', ');
 
-        const promptText = `Atue como um assistente financeiro. Analise a imagem em anexo (um PIX ou comprovativo).
-        Extraia a informação EXATAMENTE no formato JSON Array abaixo, sem qualquer texto adicional ou blocos de código markdown.
+        const promptText = `Atue como um assistente financeiro inteligente. Analise a imagem em anexo (pode ser um PIX, comprovante de pagamento ou print de um extrato bancário com vários itens).
+        Identifique TODAS as transações financeiras (entradas e saídas) presentes na imagem.
+        Extraia a informação EXATAMENTE no formato JSON Array abaixo, sem qualquer texto adicional (sem markdown, sem explicações).
         [
           {
-            "description": "Nome de quem pagou",
-            "amount": 150.50,
-            "type": "income",
-            "category": "Trabalho",
-            "date": "YYYY-MM-DD",
-            "wallet": "Escolha APENAS UMA destas contas exatas: [${accountNames}]. Use Conta Corrente se não souber.",
-            "payer": "Conjunto"
+            "description": "Nome curto de quem enviou/recebeu ou loja",
+            "amount": "Apenas o valor numérico. Use ponto para os decimais e sem separador de milhares. Exemplo: 1500.50 (E NUNCA 1.500,50)",
+            "type": "Escreva exatamente 'income' (para entradas/receitas) ou 'expense' (para saídas/despesas)",
+            "category": "Escolha UMA categoria: Alimentação, Transporte, Moradia, Contas, Compras, Lazer, Saúde, Educação, Viagens, Pets, Trabalho, Investimentos ou Outros",
+            "date": "Data no formato YYYY-MM-DD. Se a imagem não mostrar o ano, assuma que estamos no ano de ${currentDate.getFullYear()}.",
+            "wallet": "Identifique a conta ou banco (ex: Santander, Nubank, Itaú, C6). Seja exato no nome que encontrar."
           }
         ]`;
 
@@ -504,7 +529,6 @@ export default function App() {
         let rawText = responseData.candidates[0].content.parts[0].text;
         
         rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-        
         if(!rawText.startsWith('[')) rawText = `[${rawText}`;
         if(!rawText.endsWith(']')) rawText = `${rawText}]`;
         
@@ -513,22 +537,58 @@ export default function App() {
 
         let newRecordsCount = 0;
         let offlineTransactions = [...transactions];
+        let newAccountsList = [...accounts];
 
         for (const extracted of extractedArray) {
-            const isDuplicate = offlineTransactions.some(t => t.description === extracted.description && t.amount === extracted.amount && t.date === extracted.date && t.type === 'income');
+            let amtStr = String(extracted.amount || '0').replace(/[^\d.,-]/g, '');
+            if (amtStr.includes(',') && amtStr.includes('.')) {
+                if (amtStr.indexOf(',') > amtStr.indexOf('.')) {
+                    amtStr = amtStr.replace(/\./g, '').replace(',', '.'); 
+                } else {
+                    amtStr = amtStr.replace(/,/g, ''); 
+                }
+            } else if (amtStr.includes(',')) {
+                amtStr = amtStr.replace(',', '.'); 
+            }
+            const amount = Math.abs(parseFloat(amtStr));
+
+            const typeStr = String(extracted.type || 'income').toLowerCase();
+            const type = (typeStr.includes('expense') || typeStr.includes('saida') || typeStr.includes('despesa')) ? 'expense' : 'income';
+
+            const txDate = extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : new Date().toISOString().split('T')[0];
+
+            let walletName = extracted.wallet || 'Conta Corrente';
+            if (walletName.toLowerCase() === 'income' || walletName.toLowerCase() === 'expense') walletName = 'Conta Corrente';
             
-            if (!isDuplicate) {
+            const walletExists = newAccountsList.some(a => a.name.toLowerCase() === walletName.toLowerCase());
+            
+            if (!walletExists && walletName.trim().length > 1) {
+                const newAcc = { id: crypto.randomUUID(), name: walletName, type: 'Conta', initialBalance: 0 };
+                newAccountsList.push(newAcc);
+                if (db && user) {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', newAcc.id), newAcc);
+                }
+            }
+
+            const isDuplicate = offlineTransactions.some(t => 
+                t.description === extracted.description && 
+                t.amount === amount && 
+                t.date === txDate && 
+                t.type === type
+            );
+            
+            if (!isDuplicate && amount > 0) {
                 const newTx = {
                     id: crypto.randomUUID(), 
-                    description: extracted.description || 'PIX Recebido', 
-                    amount: parseFloat(extracted.amount) || 0, 
-                    type: 'income',
-                    category: extracted.category || 'Trabalho', 
-                    date: extracted.date && extracted.date.match(/^\d{4}-\d{2}-\d{2}$/) ? extracted.date : new Date().toISOString().split('T')[0],
+                    description: extracted.description || 'Lançamento IA', 
+                    amount: amount, 
+                    type: type,
+                    category: extracted.category || 'Outros', 
+                    expenseCategory: type === 'expense' ? 'Variável' : '',
+                    date: txDate,
                     status: 'paid', 
-                    wallet: extracted.wallet || (accounts.length > 0 ? accounts[0].name : 'Conta Corrente'), 
-                    payer: extracted.payer || 'Conjunto', 
-                    expenseCategory: '', 
+                    wallet: walletName, 
+                    payer: 'Conjunto', 
                     isSubscription: false
                 };
 
@@ -542,16 +602,19 @@ export default function App() {
         
         if (!db || !user) {
             setTransactions(offlineTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)));
+            if (newAccountsList.length > accounts.length) {
+                setAccounts(newAccountsList);
+            }
         }
 
         if (newRecordsCount > 0) {
-            setReceiptImportMessage({ type: 'success', text: `${newRecordsCount} PIX registado(s) com sucesso ✅` });
+            setReceiptImportMessage({ type: 'success', text: `${newRecordsCount} transação(ões) registada(s) e adicionada(s) às contas ✅` });
             setTimeout(() => setIsReceiptImportOpen(false), 4500);
         } else {
-            setReceiptImportMessage({ type: 'error', text: `PIX não reconhecido ou já estava registado.` });
+            setReceiptImportMessage({ type: 'error', text: `Nenhuma transação nova encontrada (ou já estavam todas registadas no sistema).` });
         }
     } catch (err) { 
-        setReceiptImportMessage({ type: 'error', text: `Erro: ${err.message}` }); 
+        setReceiptImportMessage({ type: 'error', text: `Erro de Leitura: ${err.message}` }); 
     } finally { 
         setIsReceiptImporting(false); 
         if(e.target) e.target.value = ''; 
@@ -561,10 +624,33 @@ export default function App() {
   const handleAddAccount = async (e) => {
       e.preventDefault();
       if (!newAccountName) return;
-      const newAcc = { id: crypto.randomUUID(), name: newAccountName, type: newAccountType, initialBalance: parseFloat(newAccountBalance) || 0 };
-      if (db && user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', newAcc.id), newAcc);
-      else setAccounts([...accounts, newAcc]);
-      setIsAccountModalOpen(false); setNewAccountName(''); setNewAccountType('Conta'); setNewAccountBalance('');
+      
+      if (editingAccountId) {
+          const updatedAcc = accounts.find(a => a.id === editingAccountId);
+          if (updatedAcc) {
+              const finalAcc = { ...updatedAcc, name: newAccountName, type: newAccountType };
+              if (db && user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', finalAcc.id), finalAcc);
+              else setAccounts(accounts.map(a => a.id === finalAcc.id ? finalAcc : a));
+          }
+      } else {
+          const newAcc = { id: crypto.randomUUID(), name: newAccountName, type: newAccountType, initialBalance: parseFloat(newAccountBalance) || 0 };
+          if (db && user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', newAcc.id), newAcc);
+          else setAccounts([...accounts, newAcc]);
+      }
+      
+      setIsAccountModalOpen(false); 
+      setEditingAccountId(null);
+      setNewAccountName(''); 
+      setNewAccountType('Conta'); 
+      setNewAccountBalance('');
+  };
+
+  const handleEditAccountClick = (acc) => {
+      setEditingAccountId(acc.id);
+      setNewAccountName(acc.name);
+      setNewAccountType(acc.type);
+      setNewAccountBalance(''); 
+      setIsAccountModalOpen(true);
   };
 
   const confirmAdjustBalance = async (e) => {
@@ -629,7 +715,6 @@ export default function App() {
       setIsModalOpen(true);
   };
 
-  // 1. Receita Rápida
   const handleQuickAddIncome = async (e) => {
       e.preventDefault();
       if (!quickAmount) return;
@@ -662,7 +747,6 @@ export default function App() {
       setQuickPayer('Conjunto');
   };
 
-  // 2. Despesa Rápida
   const handleQuickAddExpense = async (e) => {
       e.preventDefault();
       if (!quickExpenseAmount || !quickExpenseDesc) return;
@@ -821,23 +905,6 @@ export default function App() {
       setDeleteConfig(null);
   };
 
-  const exportCSV = () => {
-    const headers = "Data,Descrição,Categoria,Tipo,Valor,Conta,Pagador,Status\n";
-    const rows = transactions.map(t => `${t.date},${t.description},${t.category},${t.type === 'income' ? 'Receita' : 'Despesa'},${t.amount},${t.wallet || 'N/A'},${t.payer || 'Conjunto'},${t.status === 'paid' ? 'Pago' : 'Pendente'}`).join("\n");
-    const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `financas_${new Date().toISOString().split('T')[0]}.csv`; a.click();
-  };
-
-  const updateBudget = async (cat) => {
-    const newBudget = prompt(`Defina o limite mensal para ${cat} (R$):`, budgets[cat] || 0);
-    if (newBudget !== null && !isNaN(newBudget)) {
-        const amount = parseFloat(newBudget);
-        if (db && user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'budgets', cat), { amount });
-        else setBudgets({ ...budgets, [cat]: amount });
-    }
-  };
-
   const handleImportPlanilha = async () => {
       setImportStatus('importing');
       try {
@@ -941,8 +1008,8 @@ export default function App() {
                 <Database size={18} />
               </button>
 
-              <button onClick={() => { setReceiptImportMessage({type: '', text: ''}); setIsReceiptImportOpen(true); }} className="bg-teal-500 hover:bg-teal-400 dark:bg-teal-700 dark:hover:bg-teal-600 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5 shadow-sm text-white" title="Ler Comprovante de PIX (IA)">
-                <Receipt size={18} /> <span className="hidden lg:inline text-sm">Ler PIX</span>
+              <button onClick={() => { setReceiptImportMessage({type: '', text: ''}); setIsReceiptImportOpen(true); }} className="bg-teal-500 hover:bg-teal-400 dark:bg-teal-700 dark:hover:bg-teal-600 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5 shadow-sm text-white" title="Ler Extrato / Comprovante (IA)">
+                <Receipt size={18} /> <span className="hidden lg:inline text-sm">Ler Extrato/PIX</span>
               </button>
 
               <button onClick={() => { resetForm(); setIsModalOpen(true); }} className="bg-indigo-500 hover:bg-indigo-400 dark:bg-indigo-700 dark:hover:bg-indigo-600 px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg font-medium transition-colors flex items-center gap-1.5 shadow-sm">
@@ -1010,7 +1077,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full">
               <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors flex flex-col w-full">
                 <div className="p-4 border-b border-gray-100 dark:border-gray-700 bg-amber-50/50 dark:bg-amber-900/10 flex justify-between items-center">
                   <h2 className="text-lg font-semibold text-amber-800 dark:text-amber-400 flex items-center gap-2">
@@ -1151,8 +1218,11 @@ export default function App() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
                    {accounts.map(acc => (
                       <div key={acc.id} className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 transition-colors hover:shadow-md flex flex-col justify-between h-full relative group">
-                         <button onClick={() => setAdjustingAccount(acc)} className="absolute top-4 right-4 p-2 text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-md transition-all sm:opacity-0 sm:group-hover:opacity-100" title="Ajustar Saldo Manualmente"><Edit2 size={16} /></button>
-                         <div className="flex items-center gap-4 mb-4 pr-8">
+                         <div className="absolute top-4 right-4 flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-all">
+                             <button onClick={() => handleEditAccountClick(acc)} className="p-2 text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-md transition-all" title="Editar Conta"><Edit2 size={16} /></button>
+                             <button onClick={() => setAdjustingAccount(acc)} className="p-2 text-gray-300 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded-md transition-all" title="Ajustar Saldo Manualmente"><RefreshCw size={16} /></button>
+                         </div>
+                         <div className="flex items-center gap-4 mb-4 pr-16">
                             <div className={`p-3 rounded-xl shrink-0 ${acc.type === 'Cartão' ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400' : acc.type === 'Dinheiro' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'}`}>
                                <WalletIcon walletName={acc.name} size={24} />
                             </div>
@@ -1621,13 +1691,13 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DE ADICIONAR NOVA CONTA (BANCO) */}
+      {/* MODAL DE ADICIONAR OU EDITAR CONTA (BANCO) */}
       {isAccountModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-blue-50 dark:bg-blue-900/20">
-              <h3 className="text-lg font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-2"><Landmark size={22} /> Nova Conta / Banco</h3>
-              <button onClick={() => setIsAccountModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
+              <h3 className="text-lg font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-2"><Landmark size={22} /> {editingAccountId ? 'Editar Conta' : 'Nova Conta / Banco'}</h3>
+              <button onClick={() => { setIsAccountModalOpen(false); setEditingAccountId(null); setNewAccountName(''); setNewAccountType('Conta'); setNewAccountBalance(''); }} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={24} /></button>
             </div>
             <form onSubmit={handleAddAccount} className="p-6 space-y-4">
               <div>
@@ -1643,12 +1713,14 @@ export default function App() {
                         <option value="Dinheiro">💵 Físico</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Saldo (R$)</label>
-                    <input type="number" step="0.01" value={newAccountBalance} onChange={(e) => setNewAccountBalance(e.target.value)} placeholder="0,00" className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none" />
-                  </div>
+                  {!editingAccountId && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Saldo Inicial (R$)</label>
+                        <input type="number" step="0.01" value={newAccountBalance} onChange={(e) => setNewAccountBalance(e.target.value)} placeholder="0,00" className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none" />
+                      </div>
+                  )}
               </div>
-              <button type="submit" className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors">Adicionar Conta</button>
+              <button type="submit" className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors">{editingAccountId ? 'Guardar Alterações' : 'Adicionar Conta'}</button>
             </form>
           </div>
         </div>
@@ -1769,16 +1841,16 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL DO LEITOR DE PIX / IA */}
+      {/* MODAL DO LEITOR DE EXTRATO/PIX / IA */}
       {isReceiptImportOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
           <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-teal-500 text-white">
-              <h3 className="text-xl font-bold flex items-center gap-2"><Receipt size={24} /> Leitor de PIX</h3>
+              <h3 className="text-xl font-bold flex items-center gap-2"><Receipt size={24} /> Leitor Inteligente</h3>
               <button onClick={() => !isReceiptImporting && setIsReceiptImportOpen(false)} className="text-teal-100 hover:text-white" disabled={isReceiptImporting}><X size={24} /></button>
             </div>
             <div className="p-6">
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 text-center">Envie o <strong className="text-teal-600 dark:text-teal-400">Comprovante de PIX</strong> (print ou PDF). A IA vai identificar quem pagou, o valor e para qual banco foi.</p>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 text-center">Envie um <strong className="text-teal-600 dark:text-teal-400">Extrato, Comprovativo ou PIX</strong>. A IA vai separar as Entradas e Saídas e categorizar tudo automaticamente.</p>
               
               {receiptImportMessage.text && (
                   <div className={`mb-4 p-4 text-sm rounded-xl border font-medium text-center ${receiptImportMessage.type === 'error' ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-600 border-rose-200 dark:border-rose-800' : 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 border-emerald-200 dark:border-emerald-800'}`}>
@@ -1792,8 +1864,8 @@ export default function App() {
                   {isReceiptImporting ? (
                       <>
                           <Loader2 size={48} className="text-teal-500 animate-spin mb-4" />
-                          <p className="text-teal-700 dark:text-teal-400 font-bold text-center text-lg">A ler o PIX...</p>
-                          <p className="text-teal-600/70 dark:text-teal-400/70 text-sm text-center mt-1">A identificar banco e valor</p>
+                          <p className="text-teal-700 dark:text-teal-400 font-bold text-center text-lg">A analisar imagem...</p>
+                          <p className="text-teal-600/70 dark:text-teal-400/70 text-sm text-center mt-1">A classificar transações</p>
                       </>
                   ) : (
                       <>
@@ -1801,12 +1873,109 @@ export default function App() {
                               <UploadCloud size={32} className="text-teal-600 dark:text-teal-400" />
                           </div>
                           <p className="text-gray-800 dark:text-gray-200 font-bold text-center text-lg">Toque para enviar Print</p>
-                          <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Imagens ou PDF</p>
+                          <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Imagens (Extratos/Recibos)</p>
                       </>
                   )}
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* BOTOES FLUTUANTES (DESPESA E RECEITA) */}
+      <div className="fixed bottom-6 right-6 sm:bottom-10 sm:right-10 flex flex-col gap-4 z-40">
+          
+          {/* BOTÃO FLUTUANTE DE DESPESA RAPIDA */}
+          <button
+            onClick={() => { setQuickExpenseWallet(accounts.length > 0 ? accounts[0].name : 'Conta Corrente'); setIsQuickExpenseModalOpen(true); }}
+            className="bg-rose-500 hover:bg-rose-600 text-white p-4 rounded-full shadow-2xl hover:scale-105 transition-transform flex items-center justify-center group relative"
+            title="Despesa Rápida"
+          >
+            <Minus size={24} strokeWidth={3} />
+            <span className="absolute right-16 bg-gray-900 dark:bg-white dark:text-gray-900 text-white text-xs px-2 py-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap font-bold shadow-lg pointer-events-none">Despesa Rápida</span>
+          </button>
+
+          {/* BOTÃO FLUTUANTE DE RECEITA RAPIDA */}
+          <button
+            onClick={() => setIsQuickAddModalOpen(true)}
+            className="bg-emerald-500 hover:bg-emerald-600 text-white p-4 rounded-full shadow-2xl hover:scale-105 transition-transform flex items-center justify-center group relative"
+            title="Recebimento Rápido"
+          >
+            <Plus size={28} strokeWidth={3} />
+            <span className="absolute right-16 bg-gray-900 dark:bg-white dark:text-gray-900 text-white text-xs px-2 py-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap font-bold shadow-lg pointer-events-none">Recebimento Rápido</span>
+          </button>
+      </div>
+
+      {/* MODAL DO BOTÃO FLUTUANTE DE DESPESA RÁPIDA */}
+      {isQuickExpenseModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-rose-500 text-white">
+              <h3 className="text-xl font-bold flex items-center gap-2"><Minus size={24} /> Despesa Rápida</h3>
+              <button onClick={() => setIsQuickExpenseModalOpen(false)} className="text-rose-100 hover:text-white"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleQuickAddExpense} className="p-6 space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Valor da Despesa?</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-gray-400">R$</span>
+                  <input type="text" inputMode="decimal" required value={quickExpenseAmount} onChange={(e) => setQuickExpenseAmount(e.target.value)} placeholder="0,00" autoFocus className="w-full pl-14 pr-4 py-4 border-2 border-rose-200 dark:border-gray-600 rounded-2xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-rose-500 focus:ring-0 outline-none text-3xl font-bold text-center" />
+                </div>
+              </div>
+              
+              <div>
+                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Com o que gastou?</label>
+                 <input type="text" required value={quickExpenseDesc} onChange={(e) => setQuickExpenseDesc(e.target.value)} placeholder="Ex: Padaria, Uber, Farmácia..." className="w-full px-4 py-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-rose-500 focus:ring-0 outline-none font-medium" />
+              </div>
+
+              <div>
+                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Pagou por onde?</label>
+                 <select value={quickExpenseWallet} onChange={(e) => setQuickExpenseWallet(e.target.value)} className="w-full px-4 py-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-rose-500 focus:ring-0 outline-none font-medium">
+                    {accounts.map(acc => (
+                        <option key={acc.id} value={acc.name}>{acc.type === 'Cartão' ? '💳' : acc.type === 'Dinheiro' ? '💵' : '🏦'} {acc.name}</option>
+                    ))}
+                    {accounts.length === 0 && <option value="Conta Corrente">🏦 Conta Corrente</option>}
+                 </select>
+              </div>
+              
+              <button type="submit" className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-4 rounded-2xl transition-transform hover:scale-[1.02] shadow-lg text-lg flex items-center justify-center gap-2">
+                <CheckCircle2 size={24} /> Guardar Despesa
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DO BOTÃO FLUTUANTE DE VENDA RÁPIDA (RECEITA) */}
+      {isQuickAddModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-emerald-500 text-white">
+              <h3 className="text-xl font-bold flex items-center gap-2"><DollarSign size={24} /> Novo Recebimento</h3>
+              <button onClick={() => setIsQuickAddModalOpen(false)} className="text-emerald-100 hover:text-white"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleQuickAddIncome} className="p-6 space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Qual foi o valor recebido?</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-gray-400">R$</span>
+                  <input type="text" inputMode="decimal" required value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} placeholder="0,00" autoFocus className="w-full pl-14 pr-4 py-4 border-2 border-emerald-200 dark:border-gray-600 rounded-2xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-emerald-500 focus:ring-0 outline-none text-3xl font-bold text-center" />
+                </div>
+              </div>
+              
+              <div>
+                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Para a conta de quem?</label>
+                 <div className="grid grid-cols-3 gap-2">
+                    <button type="button" onClick={() => setQuickPayer('Renan')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Renan' ? 'bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Renan</button>
+                    <button type="button" onClick={() => setQuickPayer('Esposa')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Esposa' ? 'bg-pink-50 border-pink-500 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Esposa</button>
+                    <button type="button" onClick={() => setQuickPayer('Conjunto')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Conjunto' ? 'bg-indigo-50 border-indigo-500 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Conjunta</button>
+                 </div>
+              </div>
+              <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-2xl transition-transform hover:scale-[1.02] shadow-lg text-lg flex items-center justify-center gap-2">
+                <CheckCircle2 size={24} /> Guardar Receita
+              </button>
+            </form>
           </div>
         </div>
       )}
