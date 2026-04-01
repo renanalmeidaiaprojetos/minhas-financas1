@@ -264,6 +264,7 @@ export default function App() {
 
   const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false);
   const [quickAmount, setQuickAmount] = useState('');
+  const [quickIncomeDesc, setQuickIncomeDesc] = useState('');
   const [quickPayer, setQuickPayer] = useState('Conjunto');
   const [quickIncomeWallet, setQuickIncomeWallet] = useState('');
 
@@ -778,7 +779,7 @@ export default function App() {
       
       const newTx = {
           id: crypto.randomUUID(), 
-          description: 'Recebimento Rápido', 
+          description: quickIncomeDesc || 'Recebimento Rápido', 
           amount: numericAmount, 
           type: 'income',
           expenseCategory: '',
@@ -799,6 +800,7 @@ export default function App() {
       
       setIsQuickAddModalOpen(false); 
       setQuickAmount(''); 
+      setQuickIncomeDesc('');
       setQuickPayer('Conjunto');
       setQuickIncomeWallet('');
   };
@@ -2076,6 +2078,11 @@ export default function App() {
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-gray-400">R$</span>
                   <input type="text" inputMode="decimal" required value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} placeholder="0,00" autoFocus className="w-full pl-14 pr-4 py-4 border-2 border-emerald-200 dark:border-gray-600 rounded-2xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-emerald-500 focus:ring-0 outline-none text-3xl font-bold text-center" />
                 </div>
+              </div>
+              
+              <div>
+                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">De onde veio o dinheiro?</label>
+                 <input type="text" required value={quickIncomeDesc} onChange={(e) => setQuickIncomeDesc(e.target.value)} placeholder="Ex: Salário, Venda, Presente..." className="w-full px-4 py-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-emerald-500 focus:ring-0 outline-none font-medium" />
               </div>
               
               <div>
