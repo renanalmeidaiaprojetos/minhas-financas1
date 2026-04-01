@@ -8,7 +8,8 @@ import {
   Moon, Sun, Download, Search, CheckCircle2, Circle, Repeat, Target,
   ArrowUpRight, ArrowDownRight, Minus, Loader2,
   Bell, CreditCard, RefreshCw, Banknote, Landmark, AlertTriangle, Bot,
-  Database, Check, User, Users, Building, Edit2, Pin, TrendingUp as TrendUpIcon, Receipt, UploadCloud, Sparkles
+  Database, Check, User, Users, Building, Edit2, Pin, TrendingUp as TrendUpIcon, Receipt, UploadCloud, Sparkles,
+  LogOut, Lock
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
@@ -80,6 +81,11 @@ const db = getFirestore(app);
 const appId = "cofre-da-familia"; 
 
 export default function App() {
+  const [activeProfile, setActiveProfile] = useState(() => localStorage.getItem('financas_active_profile') || null);
+  const [loginUser, setLoginUser] = useState('Renan');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
   const [transactions, setTransactions] = useState(() => {
     const saved = localStorage.getItem('financas_app_data');
     return saved ? JSON.parse(saved) : DADOS_INICIAIS;
@@ -149,7 +155,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user || !db) return;
+    if (!user || !db || !activeProfile) return; // Só carrega cloud se estiver logado
     setIsCloudLoading(true);
 
     const txRef = collection(db, 'artifacts', appId, 'public', 'data', 'transactions');
@@ -190,7 +196,7 @@ export default function App() {
     }, (err) => console.error(err));
 
     return () => { unsubTx(); unsubBg(); unsubGoals(); unsubAccounts(); };
-  }, [user]);
+  }, [user, activeProfile]);
 
   // Limpeza Automática: Exclui definitivamente as transações de Jan, Fev e Março
   useEffect(() => {
@@ -613,7 +619,8 @@ export default function App() {
                     date: txDate,
                     status: 'paid', 
                     wallet: walletName, 
-                    payer: 'Conjunto', 
+                    payer: 'Conjunto',
+                    addedBy: activeProfile, // Carimbo de quem leu o PIX
                     isSubscription: false
                 };
 
@@ -757,7 +764,8 @@ export default function App() {
           date: new Date().toISOString().split('T')[0], 
           status: 'paid', 
           wallet: accounts.length > 0 ? accounts[0].name : 'Conta Corrente', 
-          payer: quickPayer, 
+          payer: quickPayer,
+          addedBy: activeProfile, // Carimbo de quem adicionou
           isSubscription: false
       };
 
@@ -789,7 +797,8 @@ export default function App() {
           date: new Date().toISOString().split('T')[0], 
           status: 'paid', 
           wallet: quickExpenseWallet || (accounts.length > 0 ? accounts[0].name : 'Conta Corrente'), 
-          payer: 'Conjunto', 
+          payer: 'Conjunto',
+          addedBy: activeProfile, // Carimbo de quem adicionou
           isSubscription: false
       };
 
@@ -827,6 +836,7 @@ export default function App() {
             status,
             wallet: finalWallet,
             payer,
+            addedBy: originalTx.addedBy || activeProfile, // Mantém ou adiciona quem registou
             isSubscription: originalTx ? originalTx.isSubscription : false
         };
 
@@ -842,7 +852,7 @@ export default function App() {
               id: crypto.randomUUID(), description, amount: numericAmount, type,
               expenseCategory: type === 'expense' ? expenseCategory : '',
               category: type === 'income' && category === 'Alimentação' ? 'Trabalho' : category,
-              date: currentTransDate.toISOString().split('T')[0], status, wallet: finalWallet, payer, isSubscription: true
+              date: currentTransDate.toISOString().split('T')[0], status, wallet: finalWallet, payer, addedBy: activeProfile, isSubscription: true
             });
         } else {
             const totalInstallments = recurrenceType === 'installments' ? installments : 1;
@@ -853,7 +863,7 @@ export default function App() {
                 amount: numericAmount, type, 
                 expenseCategory: type === 'expense' ? expenseCategory : '',
                 category: type === 'income' && category === 'Alimentação' ? 'Trabalho' : category,
-                date: currentTransDate.toISOString().split('T')[0], status: i === 0 ? status : 'pending', wallet: i === 0 ? finalWallet : '', payer, isSubscription: false
+                date: currentTransDate.toISOString().split('T')[0], status: i === 0 ? status : 'pending', wallet: i === 0 ? finalWallet : '', payer, addedBy: activeProfile, isSubscription: false
               });
               currentTransDate.setMonth(currentTransDate.getMonth() + 1);
             }
@@ -903,7 +913,7 @@ export default function App() {
               const nextDateString = currentTxDate.toISOString().split('T')[0];
               const alreadyExists = transactions.some(t => t.description === tx.description && t.date === nextDateString && t.isSubscription);
               if (!alreadyExists) {
-                  const newTx = { ...tx, id: crypto.randomUUID(), date: nextDateString, status: 'pending', wallet: '' };
+                  const newTx = { ...tx, id: crypto.randomUUID(), date: nextDateString, status: 'pending', wallet: '', addedBy: activeProfile };
                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', newTx.id), newTx);
               }
           }
@@ -914,7 +924,7 @@ export default function App() {
               const nextDateString = currentTxDate.toISOString().split('T')[0];
               const alreadyExists = newTransactions.some(t => t.description === tx.description && t.date === nextDateString && t.isSubscription);
               if (!alreadyExists) {
-                  newTransactions.push({ ...tx, id: crypto.randomUUID(), date: nextDateString, status: 'pending', wallet: '' });
+                  newTransactions.push({ ...tx, id: crypto.randomUUID(), date: nextDateString, status: 'pending', wallet: '', addedBy: activeProfile });
               }
           }
           setTransactions(newTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)));
@@ -948,7 +958,8 @@ export default function App() {
                           id: crypto.randomUUID(), description: row.desc, amount: val, type: row.type,
                           expenseCategory: row.expenseCategory || '',
                           category: row.cat, date: dateStr, status: isPast ? 'paid' : 'pending',
-                          wallet: isPast ? row.wallet : '', payer: row.payer || 'Conjunto', isSubscription: false
+                          wallet: isPast ? row.wallet : '', payer: row.payer || 'Conjunto', 
+                          addedBy: 'Sistema', isSubscription: false
                       });
                   }
               });
@@ -976,6 +987,53 @@ export default function App() {
             <p className="text-lg font-medium text-indigo-100">A carregar o seu Cofre...</p>
         </div>
      );
+  }
+
+  // TELA DE LOGIN (PERFIL DE ACESSO)
+  if (!activeProfile) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 transition-colors ${darkMode ? 'dark bg-gray-900' : 'bg-gray-50'}`}>
+        <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-2xl w-full max-w-sm animate-in fade-in zoom-in-95 duration-500 border border-gray-100 dark:border-gray-700">
+          <div className="flex justify-center mb-6">
+            <div className="p-4 bg-indigo-100 dark:bg-indigo-900/30 rounded-full text-indigo-600 dark:text-indigo-400 shadow-inner">
+              <Wallet size={48} />
+            </div>
+          </div>
+          <h2 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-100 mb-2 tracking-tight">Finanças Familiares</h2>
+          <p className="text-center text-gray-500 dark:text-gray-400 mb-8 text-sm">Faça login para registar as suas contas</p>
+
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            // A SENHA ESTÁ DEFINIDA COMO "1234" PARA AMBOS (Para facilitar o uso)
+            if (loginPassword === '1234') {
+                setActiveProfile(loginUser);
+                localStorage.setItem('financas_active_profile', loginUser);
+            } else {
+                setLoginError('Senha incorreta! (Dica: a senha padrão é 1234)');
+            }
+          }} className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Quem está a aceder?</label>
+              <select value={loginUser} onChange={(e) => setLoginUser(e.target.value)} className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none font-medium">
+                <option value="Renan">Renan</option>
+                <option value="Amanda">Amanda</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Senha de Acesso</label>
+              <div className="relative">
+                <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input type="password" required value={loginPassword} onChange={(e) => {setLoginPassword(e.target.value); setLoginError('');}} placeholder="Digite a senha" className="w-full pl-11 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none font-medium" />
+              </div>
+              {loginError && <p className="text-rose-500 text-xs font-bold mt-2">{loginError}</p>}
+            </div>
+            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl transition-all hover:scale-[1.02] shadow-lg mt-2 flex items-center justify-center gap-2">
+               Entrar no Cofre <ArrowUpRight size={18} />
+            </button>
+          </form>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1028,6 +1086,10 @@ export default function App() {
               </button>
               
               <button onClick={() => setDarkMode(!darkMode)} className="p-1.5 sm:p-2 rounded-full hover:bg-white/10 transition-colors"><Sun size={20} className="hidden dark:block"/><Moon size={20} className="dark:hidden" /></button>
+
+              <button onClick={() => { setActiveProfile(null); localStorage.removeItem('financas_active_profile'); setLoginPassword(''); }} className="p-1.5 sm:p-2 rounded-full hover:bg-white/10 transition-colors text-indigo-200 hover:text-white" title={`Sair (Sessão: ${activeProfile})`}>
+                <LogOut size={20} />
+              </button>
               
               <button onClick={() => setIsPlanilhaModalOpen(true)} className="hidden sm:flex bg-indigo-700 hover:bg-indigo-800 dark:bg-indigo-950 dark:hover:bg-indigo-900 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg font-medium transition-colors items-center gap-2 shadow-sm text-white" title="Importar Planilha Antiga">
                 <Database size={18} />
@@ -1139,6 +1201,8 @@ export default function App() {
                                 <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-0.5">
                                   <span className={`text-xs whitespace-nowrap ${isOverdue ? 'text-rose-500 font-bold' : 'text-gray-500 dark:text-gray-400'}`}>{formatDate(t.date)}</span>
                                   {isOverdue ? <span className="bg-rose-100 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 text-[9px] uppercase px-1.5 rounded font-bold flex items-center gap-1"><AlertTriangle size={10}/> Atrasada</span> : null}
+                                  {t.payer && t.payer !== 'Conjunto' && <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-600"><PayerIcon payer={t.payer} size={10} /> {t.payer}</span>}
+                                  {t.addedBy && <span className="flex items-center gap-1 text-[10px] text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-800" title={`Adicionado por: ${t.addedBy}`}>✍️ {t.addedBy}</span>}
                                 </div>
                               </td>
                               <td className={`px-4 py-3 text-right text-sm font-bold whitespace-nowrap ${t.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
@@ -1191,6 +1255,8 @@ export default function App() {
                                 <div className="flex flex-wrap items-center gap-1 mt-0.5">
                                   <span className="text-xs text-gray-400 whitespace-nowrap">{formatDate(t.date)}</span>
                                   <span className="flex items-center gap-1 text-[9px] sm:text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1 sm:px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-600" title={`Carteira: ${t.wallet}`}><WalletIcon walletName={t.wallet} size={10} /> <span className="truncate max-w-[50px]">{t.wallet || 'S/ Conta'}</span></span>
+                                  {t.payer && t.payer !== 'Conjunto' && <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-600" title={`Pago por: ${t.payer}`}><PayerIcon payer={t.payer} size={10} /> {t.payer}</span>}
+                                  {t.addedBy && <span className="flex items-center gap-1 text-[10px] text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-800" title={`Adicionado por: ${t.addedBy}`}>✍️ {t.addedBy}</span>}
                                 </div>
                               </td>
                               <td className="px-4 py-3">
