@@ -14,10 +14,8 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
-const DADOS_INICIAIS = [
-  { id: '1', description: 'Salário', amount: 4500.00, type: 'income', expenseCategory: '', category: 'Trabalho', date: '2026-03-01', status: 'paid', wallet: 'Nubank Renan', isSubscription: false, payer: 'Renan' },
-  { id: '2', description: 'Aluguel', amount: 1200.00, type: 'expense', expenseCategory: 'Fixa', category: 'Moradia', date: '2026-03-05', status: 'paid', wallet: 'Nubank Esposa', isSubscription: true, payer: 'Esposa' }
-];
+// Zerei os dados iniciais que estavam em Março
+const DADOS_INICIAIS = [];
 
 const CONTAS_INICIAIS = [
   { id: '1', name: 'Dinheiro', type: 'Dinheiro', initialBalance: 0 },
@@ -47,23 +45,24 @@ const CATEGORIAS = {
 
 const ORCAMENTOS_PADRAO = { 'Alimentação': 1000, 'Transporte': 500, 'Moradia': 2000, 'Contas': 800, 'Lazer': 400 };
 
+// Mantive todos os dados de Abril (índice 3) para a frente. Janeiro, Fevereiro e Março (índices 0, 1 e 2) estão agora zerados.
 const RAW_PLANILHA = [
-  { day: 1, desc: 'CARTÃO WASHINGTON', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Conjunto', wallet: 'Cartão de Crédito', values: [200, 200, 716.68, 716.68, 716.68, 550, 350, 350] },
-  { day: 10, desc: 'CLARO RESIDENCIAL', type: 'expense', expenseCategory: 'Fixa', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [314.91, 321.84, 320, 320, 320, 320, 320, 320, 320, 320, 320, 320] },
-  { day: 10, desc: 'CARTÃO LENA', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Conjunto', wallet: 'Cartão de Crédito', values: [100, 139, 0, 1007] },
-  { day: 13, desc: 'CONTA DE GÁS', type: 'expense', expenseCategory: 'Variável', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [161.79, 185, 188.03, 280, 280, 280, 280, 280, 280, 280, 280, 280] },
-  { day: 14, desc: 'ACORDO NUBANK AMANDA', type: 'expense', expenseCategory: 'Fixa', cat: 'Contas', payer: 'Esposa', wallet: 'Nubank Esposa', values: [84.20, 84.20, 84.20, 84.20, 84.20, 84.20] },
-  { day: 14, desc: 'ACORDO INTER', type: 'expense', expenseCategory: 'Fixa', cat: 'Contas', payer: 'Renan', wallet: 'Conta Corrente', values: [130.67, 130.67, 130.67, 130.67, 130.67] },
-  { day: 15, desc: 'MENSALIDADE ESCOLA', type: 'expense', expenseCategory: 'Fixa', cat: 'Educação', payer: 'Conjunto', wallet: 'Nubank Renan', values: [862.51, 750, 729, 750, 750, 750, 750, 750, 750, 750, 750, 750] },
-  { day: 20, desc: 'CONVÊNIO', type: 'expense', expenseCategory: 'Fixa', cat: 'Saúde', payer: 'Conjunto', wallet: 'Conta Corrente', values: [723.96, 735, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96] },
-  { day: 20, desc: 'CONTA DE ÁGUA', type: 'expense', expenseCategory: 'Variável', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [172.94, 144.10, 150, 150, 150, 150, 150, 150, 150, 150, 150, 150] },
-  { day: 20, desc: 'SELECIONADOS FUTSAL', type: 'expense', expenseCategory: 'Fixa', cat: 'Lazer', payer: 'Conjunto', wallet: 'Conta Corrente', values: [160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160] },
-  { day: 20, desc: 'CONTA DE LUZ', type: 'expense', expenseCategory: 'Variável', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [197.87, 240.22, 172.32, 180, 180, 180, 180, 180, 180, 180, 180, 180] },
-  { day: 20, desc: 'ALUGUEL', type: 'expense', expenseCategory: 'Fixa', cat: 'Moradia', payer: 'Conjunto', wallet: 'Conta Corrente', values: [2093, 2114, 2060.09, 2093, 2093, 2093, 2093, 2093, 2093, 2093, 2093, 2093] },
-  { day: 22, desc: 'CARTÃO DE CRÉDITO SANTANDER', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Conjunto', wallet: 'Cartão de Crédito', values: [2572.59, 1894.92, 2164.88, 619.34, 351.15, 351.15, 351.15] },
-  { day: 25, desc: 'PERUA ESCOLAR', type: 'expense', expenseCategory: 'Fixa', cat: 'Transporte', payer: 'Conjunto', wallet: 'Conta Corrente', values: [190, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200] },
-  { day: 28, desc: 'CARTÃO NUBANK', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Esposa', wallet: 'Nubank Esposa', values: [74.99, 275, 265] },
-  { day: 28, desc: 'BERNARDO', type: 'expense', expenseCategory: 'Variável', cat: 'Outros', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 300] }
+  { day: 1, desc: 'CARTÃO WASHINGTON', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Conjunto', wallet: 'Cartão de Crédito', values: [0, 0, 0, 716.68, 716.68, 550, 350, 350] },
+  { day: 10, desc: 'CLARO RESIDENCIAL', type: 'expense', expenseCategory: 'Fixa', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0, 0, 320, 320, 320, 320, 320, 320, 320, 320, 320] },
+  { day: 10, desc: 'CARTÃO LENA', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Conjunto', wallet: 'Cartão de Crédito', values: [0, 0, 0, 1007] },
+  { day: 13, desc: 'CONTA DE GÁS', type: 'expense', expenseCategory: 'Variável', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0, 0, 280, 280, 280, 280, 280, 280, 280, 280, 280] },
+  { day: 14, desc: 'ACORDO NUBANK AMANDA', type: 'expense', expenseCategory: 'Fixa', cat: 'Contas', payer: 'Esposa', wallet: 'Nubank Esposa', values: [0, 0, 0, 84.20, 84.20, 84.20] },
+  { day: 14, desc: 'ACORDO INTER', type: 'expense', expenseCategory: 'Fixa', cat: 'Contas', payer: 'Renan', wallet: 'Conta Corrente', values: [0, 0, 0, 130.67, 130.67] },
+  { day: 15, desc: 'MENSALIDADE ESCOLA', type: 'expense', expenseCategory: 'Fixa', cat: 'Educação', payer: 'Conjunto', wallet: 'Nubank Renan', values: [0, 0, 0, 750, 750, 750, 750, 750, 750, 750, 750, 750] },
+  { day: 20, desc: 'CONVÊNIO', type: 'expense', expenseCategory: 'Fixa', cat: 'Saúde', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0, 0, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96, 723.96] },
+  { day: 20, desc: 'CONTA DE ÁGUA', type: 'expense', expenseCategory: 'Variável', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0, 0, 150, 150, 150, 150, 150, 150, 150, 150, 150] },
+  { day: 20, desc: 'SELECIONADOS FUTSAL', type: 'expense', expenseCategory: 'Fixa', cat: 'Lazer', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0, 0, 160, 160, 160, 160, 160, 160, 160, 160, 160] },
+  { day: 20, desc: 'CONTA DE LUZ', type: 'expense', expenseCategory: 'Variável', cat: 'Contas', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0, 0, 180, 180, 180, 180, 180, 180, 180, 180, 180] },
+  { day: 20, desc: 'ALUGUEL', type: 'expense', expenseCategory: 'Fixa', cat: 'Moradia', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0, 0, 2093, 2093, 2093, 2093, 2093, 2093, 2093, 2093, 2093] },
+  { day: 22, desc: 'CARTÃO DE CRÉDITO SANTANDER', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Conjunto', wallet: 'Cartão de Crédito', values: [0, 0, 0, 619.34, 351.15, 351.15, 351.15] },
+  { day: 25, desc: 'PERUA ESCOLAR', type: 'expense', expenseCategory: 'Fixa', cat: 'Transporte', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0, 0, 200, 200, 200, 200, 200, 200, 200, 200, 200] },
+  { day: 28, desc: 'CARTÃO NUBANK', type: 'expense', expenseCategory: 'Variável', cat: 'Compras', payer: 'Esposa', wallet: 'Nubank Esposa', values: [0, 0, 0] },
+  { day: 28, desc: 'BERNARDO', type: 'expense', expenseCategory: 'Variável', cat: 'Outros', payer: 'Conjunto', wallet: 'Conta Corrente', values: [0, 0] }
 ];
 
 const firebaseConfig = {
@@ -192,6 +191,43 @@ export default function App() {
 
     return () => { unsubTx(); unsubBg(); unsubGoals(); unsubAccounts(); };
   }, [user]);
+
+  // Limpeza Automática: Exclui definitivamente as transações de Jan, Fev e Março
+  useEffect(() => {
+    const cleanOldData = async () => {
+      const hasCleaned = localStorage.getItem('cleaned_jan_mar_2026');
+      if (!hasCleaned && transactions.length > 0 && !isCloudLoading) {
+        const toDelete = transactions.filter(t => {
+          if (!t.date) return false;
+          const month = t.date.split('-')[1];
+          return month === '01' || month === '02' || month === '03';
+        });
+
+        if (toDelete.length > 0) {
+          console.log(`Limpando ${toDelete.length} transações antigas...`);
+          
+          if (db && user) {
+            for (const t of toDelete) {
+              try {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'transactions', t.id));
+              } catch (e) {
+                console.error(e);
+              }
+            }
+          }
+
+          setTransactions(prev => prev.filter(t => {
+              if (!t.date) return true;
+              const month = t.date.split('-')[1];
+              return month !== '01' && month !== '02' && month !== '03';
+          }));
+        }
+        localStorage.setItem('cleaned_jan_mar_2026', 'true');
+      }
+    };
+
+    cleanOldData();
+  }, [transactions, user, db, isCloudLoading]);
 
   useEffect(() => { 
     localStorage.setItem('financas_app_data', JSON.stringify(transactions));
