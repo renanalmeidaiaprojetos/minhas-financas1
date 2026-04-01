@@ -41,6 +41,7 @@ const CATEGORIAS = {
   'Investimentos': { icon: PiggyBank, color: 'text-teal-500', bg: 'bg-teal-100', darkBg: 'dark:bg-teal-900/30', barColor: 'bg-teal-500' },
   'Viagens': { icon: Plane, color: 'text-sky-500', bg: 'bg-sky-100', darkBg: 'dark:bg-sky-900/30', barColor: 'bg-sky-500' },
   'Pets': { icon: Cat, color: 'text-amber-500', bg: 'bg-amber-100', darkBg: 'dark:bg-amber-900/30', barColor: 'bg-amber-500' },
+  'Cartão de Crédito': { icon: CreditCard, color: 'text-indigo-600', bg: 'bg-indigo-100', darkBg: 'dark:bg-indigo-900/30', barColor: 'bg-indigo-600' },
   'Outros': { icon: DollarSign, color: 'text-gray-500', bg: 'bg-gray-100', darkBg: 'dark:bg-gray-800', barColor: 'bg-gray-500' },
 };
 
@@ -264,6 +265,7 @@ export default function App() {
   const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false);
   const [quickAmount, setQuickAmount] = useState('');
   const [quickPayer, setQuickPayer] = useState('Conjunto');
+  const [quickIncomeWallet, setQuickIncomeWallet] = useState('');
 
   const [isQuickExpenseModalOpen, setIsQuickExpenseModalOpen] = useState(false);
   const [quickExpenseAmount, setQuickExpenseAmount] = useState('');
@@ -549,7 +551,7 @@ export default function App() {
             "description": "Nome curto de quem enviou/recebeu ou loja",
             "amount": "Apenas o valor numérico. Use ponto para os decimais e sem separador de milhares. Exemplo: 1500.50 (E NUNCA 1.500,50)",
             "type": "Escreva exatamente 'income' (para entradas/receitas) ou 'expense' (para saídas/despesas)",
-            "category": "Escolha UMA categoria: Alimentação, Transporte, Moradia, Contas, Compras, Lazer, Saúde, Educação, Viagens, Pets, Trabalho, Investimentos ou Outros",
+            "category": "Escolha UMA categoria: Alimentação, Transporte, Moradia, Contas, Compras, Lazer, Saúde, Educação, Viagens, Pets, Trabalho, Cartão de Crédito, Investimentos ou Outros",
             "date": "Data no formato YYYY-MM-DD. Se a imagem não mostrar o ano, assuma que estamos no ano de ${currentDate.getFullYear()}.",
             "wallet": "Identifique a conta ou banco (ex: Santander, Nubank, Itaú, C6). Seja exato no nome que encontrar."
           }
@@ -763,7 +765,7 @@ export default function App() {
           category: 'Trabalho', 
           date: new Date().toISOString().split('T')[0], 
           status: 'paid', 
-          wallet: accounts.length > 0 ? accounts[0].name : 'Conta Corrente', 
+          wallet: quickIncomeWallet || (accounts.length > 0 ? accounts[0].name : 'Conta Corrente'), 
           payer: quickPayer,
           addedBy: activeProfile, // Carimbo de quem adicionou
           isSubscription: false
@@ -778,6 +780,7 @@ export default function App() {
       setIsQuickAddModalOpen(false); 
       setQuickAmount(''); 
       setQuickPayer('Conjunto');
+      setQuickIncomeWallet('');
   };
 
   const handleQuickAddExpense = async (e) => {
@@ -978,7 +981,11 @@ export default function App() {
 
   const todayStr = new Date().toISOString().split('T')[0];
   const paidTransactions = filteredTransactions.filter(t => t.status === 'paid');
-  const pendingTransactions = filteredTransactions.filter(t => t.status === 'pending');
+  
+  // Alteração Aplicada: Filtra os pendentes e ordena por data crescente (do início do mês para o final)
+  const pendingTransactions = filteredTransactions
+    .filter(t => t.status === 'pending')
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   if (isCloudLoading) {
      return (
@@ -1201,8 +1208,6 @@ export default function App() {
                                 <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-0.5">
                                   <span className={`text-xs whitespace-nowrap ${isOverdue ? 'text-rose-500 font-bold' : 'text-gray-500 dark:text-gray-400'}`}>{formatDate(t.date)}</span>
                                   {isOverdue ? <span className="bg-rose-100 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 text-[9px] uppercase px-1.5 rounded font-bold flex items-center gap-1"><AlertTriangle size={10}/> Atrasada</span> : null}
-                                  {t.payer && t.payer !== 'Conjunto' && <span className="flex items-center gap-1 text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-600"><PayerIcon payer={t.payer} size={10} /> {t.payer}</span>}
-                                  {t.addedBy && <span className="flex items-center gap-1 text-[10px] text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-800" title={`Adicionado por: ${t.addedBy}`}>✍️ {t.addedBy}</span>}
                                 </div>
                               </td>
                               <td className={`px-4 py-3 text-right text-sm font-bold whitespace-nowrap ${t.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
@@ -1685,7 +1690,7 @@ export default function App() {
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subcategoria</label>
                   <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 outline-none">
                     {type === 'expense' ? (
-                      <><option value="Alimentação">Alimentação</option><option value="Transporte">Transporte</option><option value="Moradia">Moradia</option><option value="Contas">Contas</option><option value="Compras">Compras</option><option value="Lazer">Lazer</option><option value="Saúde">Saúde</option><option value="Educação">Educação</option><option value="Viagens">Viagens</option><option value="Pets">Pets</option><option value="Outros">Outros</option></>
+                      <><option value="Alimentação">Alimentação</option><option value="Transporte">Transporte</option><option value="Moradia">Moradia</option><option value="Contas">Contas</option><option value="Compras">Compras</option><option value="Lazer">Lazer</option><option value="Saúde">Saúde</option><option value="Educação">Educação</option><option value="Viagens">Viagens</option><option value="Pets">Pets</option><option value="Cartão de Crédito">Cartão de Crédito</option><option value="Outros">Outros</option></>
                     ) : (
                       <><option value="Trabalho">Trabalho</option><option value="Investimentos">Investimentos</option><option value="Outros">Outros</option></>
                     )}
@@ -2054,7 +2059,17 @@ export default function App() {
               </div>
               
               <div>
-                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Para a conta de quem?</label>
+                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Para qual conta?</label>
+                 <select value={quickIncomeWallet} onChange={(e) => setQuickIncomeWallet(e.target.value)} className="w-full px-4 py-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:border-emerald-500 focus:ring-0 outline-none font-medium">
+                    {accounts.map(acc => (
+                        <option key={acc.id} value={acc.name}>{acc.type === 'Cartão' ? '💳' : acc.type === 'Dinheiro' ? '💵' : '🏦'} {acc.name}</option>
+                    ))}
+                    {accounts.length === 0 && <option value="Conta Corrente">🏦 Conta Corrente</option>}
+                 </select>
+              </div>
+
+              <div>
+                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">Quem recebeu?</label>
                  <div className="grid grid-cols-3 gap-2">
                     <button type="button" onClick={() => setQuickPayer('Renan')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Renan' ? 'bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Renan</button>
                     <button type="button" onClick={() => setQuickPayer('Esposa')} className={`py-3 text-sm font-bold rounded-xl transition-all border-2 ${quickPayer === 'Esposa' ? 'bg-pink-50 border-pink-500 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400' : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'}`}>Esposa</button>
