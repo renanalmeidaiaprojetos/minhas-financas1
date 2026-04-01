@@ -20,12 +20,13 @@ const DADOS_INICIAIS = [
 ];
 
 const CONTAS_INICIAIS = [
-  { id: '1', name: 'Nubank Renan', type: 'Conta', initialBalance: 0 },
-  { id: '2', name: 'Nubank Esposa', type: 'Conta', initialBalance: 0 },
-  { id: '3', name: 'Conta Corrente', type: 'Conta', initialBalance: 0 },
-  { id: '4', name: 'Cartão de Crédito', type: 'Cartão', initialBalance: 0 },
-  { id: '5', name: 'Dinheiro Físico', type: 'Dinheiro', initialBalance: 0 },
-  { id: '6', name: 'Santander', type: 'Conta', initialBalance: 0 }
+  { id: '1', name: 'Dinheiro', type: 'Dinheiro', initialBalance: 0 },
+  { id: '2', name: 'Nubank Renan', type: 'Conta', initialBalance: 0 },
+  { id: '3', name: 'Nubank Amanda', type: 'Conta', initialBalance: 0 },
+  { id: '4', name: 'Santander Renan', type: 'Conta', initialBalance: 0 },
+  { id: '5', name: 'Santander Amanda', type: 'Conta', initialBalance: 0 },
+  { id: '6', name: 'Cartão de Crédito Santander', type: 'Cartão', initialBalance: 0 },
+  { id: '7', name: 'Cartão de Crédito Nubank', type: 'Cartão', initialBalance: 0 }
 ];
 
 const CATEGORIAS = {
@@ -80,7 +81,6 @@ const db = getFirestore(app);
 const appId = "cofre-da-familia"; 
 
 export default function App() {
-  // CARREGAMENTO SEGURO DA CACHE LOCAL (Restaura instantaneamente os seus dados antigos)
   const [transactions, setTransactions] = useState(() => {
     const saved = localStorage.getItem('financas_app_data');
     return saved ? JSON.parse(saved) : DADOS_INICIAIS;
@@ -127,7 +127,6 @@ export default function App() {
     return localStorage.getItem('financas_app_theme') === 'dark';
   });
 
-  // Ligar à Nuvem
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -150,7 +149,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Escutar a Nuvem
   useEffect(() => {
     if (!user || !db) return;
     setIsCloudLoading(true);
@@ -195,7 +193,6 @@ export default function App() {
     return () => { unsubTx(); unsubBg(); unsubGoals(); unsubAccounts(); };
   }, [user]);
 
-  // Gravar sempre na Cache Local por segurança
   useEffect(() => { 
     localStorage.setItem('financas_app_data', JSON.stringify(transactions));
     localStorage.setItem('financas_app_budgets', JSON.stringify(budgets));
@@ -207,7 +204,6 @@ export default function App() {
     else document.documentElement.classList.remove('dark');
   }, [darkMode, transactions, budgets, goals, accounts, geminiApiKey]);
 
-  // Modais e Estados da Interface
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState('monthly'); 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -217,25 +213,21 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
-  // Estados dos Comprovantes/PIX IA
   const [isReceiptImportOpen, setIsReceiptImportOpen] = useState(false);
   const [isReceiptImporting, setIsReceiptImporting] = useState(false);
   const [receiptImportMessage, setReceiptImportMessage] = useState({ type: '', text: '' });
   const [advisorAdvice, setAdvisorAdvice] = useState('');
   const [isAdvisorLoading, setIsAdvisorLoading] = useState(false);
 
-  // Estados da Modal de Venda/Recebimento Rápido
   const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false);
   const [quickAmount, setQuickAmount] = useState('');
   const [quickPayer, setQuickPayer] = useState('Conjunto');
 
-  // Estados da Modal de Despesa Rápida
   const [isQuickExpenseModalOpen, setIsQuickExpenseModalOpen] = useState(false);
   const [quickExpenseAmount, setQuickExpenseAmount] = useState('');
   const [quickExpenseDesc, setQuickExpenseDesc] = useState('');
   const [quickExpenseWallet, setQuickExpenseWallet] = useState('');
 
-  // Estados do Formulário de Transação e Edição
   const [editingTxId, setEditingTxId] = useState(null);
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
@@ -249,11 +241,9 @@ export default function App() {
   const [recurrenceType, setRecurrenceType] = useState('none');
   const [installments, setInstallments] = useState(2);
 
-  // Estados para Pagamento de Pendentes
   const [payingTx, setPayingTx] = useState(null); 
   const [payWallet, setPayWallet] = useState(''); 
 
-  // Estados das Contas Bancárias e Ajuste
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [editingAccountId, setEditingAccountId] = useState(null);
   const [newAccountName, setNewAccountName] = useState('');
@@ -262,7 +252,6 @@ export default function App() {
   const [adjustingAccount, setAdjustingAccount] = useState(null);
   const [adjustBalanceInput, setAdjustBalanceInput] = useState('');
 
-  // Outros estados
   const [deleteConfig, setDeleteConfig] = useState(null);
   const [isPlanilhaModalOpen, setIsPlanilhaModalOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('idle');
@@ -1500,8 +1489,6 @@ export default function App() {
         )}
       </main>
 
-      {/* MODAIS (O mesmo estilo foi mantido, mas com padding seguro em mobile) */}
-      
       {/* MODAL: CONFIRMAR PAGAMENTO */}
       {payingTx && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
