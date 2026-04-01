@@ -460,9 +460,10 @@ export default function App() {
           if (!res.ok) { 
               const errData = await res.json(); 
               const errMsg = errData.error?.message || "";
+              const errMsgLower = errMsg.toLowerCase();
               
-              if (errMsg.includes("not found") || errMsg.includes("not supported") || errMsg.includes("permission")) {
-                  console.warn(`O modelo ${model} não funcionou ou foi bloqueado. A tentar o modelo alternativo de segurança...`);
+              if (errMsgLower.includes("not found") || errMsgLower.includes("not supported") || errMsgLower.includes("permission") || errMsgLower.includes("high demand") || errMsgLower.includes("overloaded") || errMsgLower.includes("quota") || errMsgLower.includes("try again later")) {
+                  console.warn(`O modelo ${model} falhou (${errMsg}). A tentar o próximo modelo da lista...`);
                   return await callGeminiAPI(promptText, mimeType, base64Data, fallbackLevel + 1);
               }
               
@@ -553,7 +554,8 @@ export default function App() {
             "type": "Escreva exatamente 'income' (para entradas/receitas) ou 'expense' (para saídas/despesas)",
             "category": "Escolha UMA categoria: Alimentação, Transporte, Moradia, Contas, Compras, Lazer, Saúde, Educação, Viagens, Pets, Trabalho, Cartão de Crédito, Investimentos ou Outros",
             "date": "Data no formato YYYY-MM-DD. Se a imagem não mostrar o ano, assuma que estamos no ano de ${currentDate.getFullYear()}.",
-            "wallet": "Identifique a conta ou banco (ex: Santander, Nubank, Itaú, C6). Seja exato no nome que encontrar."
+            "wallet": "OBRIGATÓRIO: Escolha EXATAMENTE um destes nomes para a conta: [${accountNames}]. Se não tiver a certeza, use 'Conta Corrente'.",
+            "payer": "Quem pagou/recebeu. Escolha: 'Renan', 'Esposa' ou 'Conjunto'."
           }
         ]`;
 
@@ -593,9 +595,27 @@ export default function App() {
             let walletName = extracted.wallet || 'Conta Corrente';
             if (walletName.toLowerCase() === 'income' || walletName.toLowerCase() === 'expense') walletName = 'Conta Corrente';
             
-            const walletExists = newAccountsList.some(a => a.name.toLowerCase() === walletName.toLowerCase());
+            // Tenta encontrar a conta exata primeiro
+            let matchedAccount = newAccountsList.find(a => a.name.toLowerCase() === walletName.toLowerCase());
             
-            if (!walletExists && walletName.trim().length > 1) {
+            // Se não encontrar o nome exato, faz uma busca inteligente (Fuzzy Match)
+            if (!matchedAccount) {
+                const possibleMatches = newAccountsList.filter(a => a.name.toLowerCase().includes(walletName.toLowerCase()) || walletName.toLowerCase().includes(a.name.toLowerCase()));
+                if (possibleMatches.length > 0) {
+                    // Tenta desempatar usando o nome da pessoa logada ou extraída (Renan ou Amanda)
+                    const payerLower = String(extracted.payer || activeProfile).toLowerCase();
+                    const payerName = payerLower.includes('esposa') || payerLower.includes('amanda') ? 'amanda' : 'renan';
+                    
+                    const exactMatch = possibleMatches.find(a => a.name.toLowerCase().includes(payerName));
+                    matchedAccount = exactMatch || possibleMatches[0];
+                }
+            }
+
+            if (matchedAccount) {
+                // Usa a conta existente que foi encontrada
+                walletName = matchedAccount.name;
+            } else if (walletName.trim().length > 1) {
+                // Só cria conta nova se realmente for um banco desconhecido que não está na lista
                 const newAcc = { id: crypto.randomUUID(), name: walletName, type: 'Conta', initialBalance: 0 };
                 newAccountsList.push(newAcc);
                 if (db && user) {
@@ -621,7 +641,7 @@ export default function App() {
                     date: txDate,
                     status: 'paid', 
                     wallet: walletName, 
-                    payer: 'Conjunto',
+                    payer: extracted.payer || (activeProfile === 'Amanda' ? 'Esposa' : 'Renan'),
                     addedBy: activeProfile, // Carimbo de quem leu o PIX
                     isSubscription: false
                 };
